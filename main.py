@@ -1,10 +1,11 @@
 from pathlib import Path
-from csv_loader import load_po_set
+from pdf_reader import pdf_to_text
 
 BASE = Path(__file__).resolve().parent
-DATA = BASE / "data"
+pdf_path = BASE / "invoices" / "invoice1.pdf"
 
-po_set = load_po_set(DATA / "Purchase_orders.csv")
+text = pdf_to_text(pdf_path)
+print("Characters extracted:", len(text))
+print("Valid PO Found:", "QAHE-PO" in text)
+print(text)
 
-print(f"{len(po_set)} POs loaded")
-print(list(po_set)[:5])

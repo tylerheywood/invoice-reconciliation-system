@@ -1,9 +1,18 @@
+'''
+- need to add document_hash generator
+- need to make sure tables are set-up correctly
+- link up with outlook
+'''
 from pathlib import Path
 from pdf_reader import pdf_to_text
 from invoice_parser import extract_po_numbers
+from db import get_connection, initialise_database
 
 BASE = Path(__file__).resolve().parent
 INVOICES = BASE / "invoices"
+
+get_connection()
+initialise_database()
 
 # Empty folder check
 

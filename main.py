@@ -1,12 +1,7 @@
-from pathlib import Path
+from __future__ import annotations
 
-from pdf_reader import pdf_to_text
-from invoice_parser import extract_po_numbers
-from db import get_connection, initialise_database
-from fingerprint import sha256_file
-
-BASE = Path(__file__).resolve().parent
-INVOICES = BASE / "invoices"
+from db import initialise_database, get_connection
+from outlook_scanner import scan_outlook_folder_to_db  # we’ll add this function
 
 
 def print_tables() -> None:
@@ -17,42 +12,19 @@ def print_tables() -> None:
     print("DB tables:", tables)
 
 
-# Initialise DB (schema only)
-initialise_database()
-print_tables()
+def main() -> None:
+    # 1) Ensure schema exists
+    initialise_database()
+    print_tables()
 
-# Empty folder check
-pdfs = list(INVOICES.glob("*.pdf"))
-if not pdfs:
-    print("No invoices found")
+    # 2) scan Outlook + persist presence + hashes
+    result = scan_outlook_folder_to_db()
+    print()
+    print("Scan summary:")
+    print("Messages seen:", result["messages_seen"])
+    print("PDF invoices saved:", result["pdfs_saved"])
+    print("Staging folder:", result["staging_dir"])
 
-for pdf_path in INVOICES.glob("*.pdf"):
-    print("\n----------------------------")
-    print("Invoice:", pdf_path.name)
 
-    doc_hash = sha256_file(pdf_path)
-    print("Document hash:", doc_hash[:12])
-
-    text = pdf_to_text(pdf_path)
-    print("Characters extracted:", len(text))
-
-    # "image-only PDF" handling
-    if len(text.strip()) == 0:
-        print("Match status: MANUAL_REVIEW_REQUIRED (NO_TEXT_LAYER)")
-        continue
-
-    pos = extract_po_numbers(text)
-    count = len(pos)
-
-    if count == 0:
-        print("No PO Found")
-    elif count == 1:
-        print("PO Found:", next(iter(pos)))
-    else:
-        print(f"Multiple POs Found: {count}")
-        print("POs:", pos)
-
-conn = get_connection()
-rows = conn.execute("PRAGMA table_info(inbox_invoice);").fetchall()
-print([r[1] for r in rows])
-conn.close()
+if __name__ == "__main__":
+    main()

@@ -19,6 +19,7 @@ NO_TEXT_LAYER = "NO_TEXT_LAYER"
 MISSING_PO = "MISSING_PO"
 MULTIPLE_POS = "MULTIPLE_POS"
 SINGLE_PO_DETECTED = "SINGLE_PO_DETECTED"
+FILE_MISSING = "FILE_MISSING"
 
 
 # ----------------------------
@@ -35,8 +36,12 @@ class PoDetectionResult:
 # Adjust this pattern to match your organisation’s PO format.
 # Keep it deterministic, simple, and explainable.
 #
-# Example: QA-HE followed by 6 digits
-PO_PATTERN = re.compile(r"\bQA-HE-[\s\-:]*([0-9]{6})\b", re.IGNORECASE)
+# Example: QAHE-PO followed by 6 digits
+PO_PATTERN = re.compile(
+    r"\bQAHE\s*-\s*PO\s*-\s*([0-9]{6})\b",
+    re.IGNORECASE
+)
+
 
 
 def extract_text_from_pdf(pdf_path: Path) -> str:
@@ -74,7 +79,8 @@ def detect_po_numbers(text: str) -> List[str]:
 
     for m in PO_PATTERN.finditer(text):
         digits = m.group(1)
-        po = f"PO{digits}"
+        po = f"QAHE-PO-{digits}"
+
         if po not in seen:
             seen.add(po)
             ordered.append(po)
@@ -190,7 +196,11 @@ def run_po_detection(*, staging_dir: Path) -> dict:
             pdf_path = hash_to_path.get(document_hash)
             if not pdf_path:
                 # Control implication: DB says invoice exists, but staging doesn't have it.
-                # For now, we just count and skip (do not invent a status).
+                write_po_results(
+                    conn,
+                    document_hash=document_hash,
+                    result=PoDetectionResult([], 0, "FILE_MISSING")
+                )
                 missing_file += 1
                 continue
 

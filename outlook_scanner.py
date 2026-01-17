@@ -336,6 +336,18 @@ def scan_outlook_folder_to_db() -> dict:
                 pdf = save_and_hash_pdf(entry_id, j, att, name)
                 pdfs_saved += 1
 
+                upsert_message(
+                    conn,
+                    message_id=entry_id,
+                    current_location=current_location,
+                    scan_ts=scan_ts,
+                    received_datetime=received or None,
+                    sender_address=sender or None,
+                    subject=subject or None,
+                    has_attachments=attachment_count > 0,
+                    attachment_count=pdf_count_for_message,  # IMPORTANT: PDFs only
+                )
+
                 upsert_invoice(
                     conn,
                     document_hash=pdf.document_hash,
@@ -344,18 +356,6 @@ def scan_outlook_folder_to_db() -> dict:
                     scan_ts=scan_ts,
                     source_folder_path=current_location,
                 )
-
-            upsert_message(
-                conn,
-                message_id=entry_id,
-                current_location=current_location,
-                scan_ts=scan_ts,
-                received_datetime=received or None,
-                sender_address=sender or None,
-                subject=subject or None,
-                has_attachments=attachment_count > 0,
-                attachment_count=pdf_count_for_message,  # IMPORTANT: PDFs only
-            )
 
         conn.commit()
 

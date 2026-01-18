@@ -1,6 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 
+from value_extraction import run_value_extraction
 from po_detection import run_po_detection
 from db import initialise_database, get_connection
 from outlook_scanner import scan_outlook_folder_to_db, STAGING_DIR  # we’ll add this function
@@ -33,6 +34,11 @@ def main() -> None:
     po_summary = run_po_detection(staging_dir=STAGING_DIR)
     print("\nPO Detection Results:")
     print(po_summary)
+
+    # 4) Value Extraction
+    value_summary = run_value_extraction(staging_dir=STAGING_DIR)
+    print("\nValue Extraction Results:")
+    print(value_summary)
 
 
 if __name__ == "__main__":

@@ -6,8 +6,8 @@ Creates tables
 enforces constraints
 holds connection helper
 """
-
-DB_PATH = Path(__file__).resolve().parent / "inbox.db"
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = BASE_DIR / "inbox.db"
 
 
 def get_connection() -> sqlite3.Connection:

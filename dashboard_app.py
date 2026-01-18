@@ -31,8 +31,9 @@ def fmt_dt(value: object) -> str:
 
 
 def pence_to_gbp_str(pence: object) -> str:
+    # For KPI cards, it's usually better to show £0.00 than "—"
     if pence is None:
-        return "—"
+        pence = 0
     try:
         v = int(pence) / 100.0
         return f"£{v:,.2f}"
@@ -48,6 +49,8 @@ def pence_or_zero(pence: object) -> int:
 
 
 def overview_metrics() -> dict:
+    READY_STATUS = "VALID_PO"  # V1 engine truth: ready invoices are VALID_PO
+
     with get_connection() as conn:
         total_present = int(
             scalar(conn, "SELECT COUNT(*) FROM inbox_invoice WHERE is_currently_present = 1") or 0
@@ -60,13 +63,26 @@ def overview_metrics() -> dict:
                 SELECT COUNT(*)
                 FROM inbox_invoice
                 WHERE is_currently_present = 1
-                  AND po_match_status = 'SINGLE_PO_DETECTED'
+                  AND po_match_status = ?
                 """,
+                (READY_STATUS,),
             )
             or 0
         )
 
-        manual_count = max(total_present - ready_count, 0)
+        manual_count = int(
+            scalar(
+                conn,
+                """
+                SELECT COUNT(*)
+                FROM inbox_invoice
+                WHERE is_currently_present = 1
+                  AND po_match_status <> ?
+                """,
+                (READY_STATUS,),
+            )
+            or 0
+        )
 
         # PO confidence % (how many present invoices are "ready")
         po_confidence = round((ready_count / total_present) * 100, 1) if total_present else None
@@ -172,10 +188,11 @@ def overview_metrics() -> dict:
             SELECT SUM(gross_total)
             FROM inbox_invoice
             WHERE is_currently_present = 1
-              AND po_match_status = 'SINGLE_PO_DETECTED'
+              AND po_match_status = ?
               AND gross_total IS NOT NULL
               AND gross_total > 0
             """,
+            (READY_STATUS,),
         )
 
         manual_exposure_pence = scalar(
@@ -184,10 +201,11 @@ def overview_metrics() -> dict:
             SELECT SUM(gross_total)
             FROM inbox_invoice
             WHERE is_currently_present = 1
-              AND po_match_status <> 'SINGLE_PO_DETECTED'
+              AND po_match_status <> ?
               AND gross_total IS NOT NULL
               AND gross_total > 0
             """,
+            (READY_STATUS,),
         )
 
         # Value coverage % (distinct from PO confidence)
@@ -269,7 +287,6 @@ with tabs[0]:
     # ----- Signals -----
     with c4:
         st.subheader("Signals")
-        # Keep PO confidence as the operational signal
         st.metric("PO confidence", f"{m['po_confidence']}%" if m["po_confidence"] is not None else "—")
         st.metric("Value coverage", f"{m['value_coverage_pct']}%" if m["value_coverage_pct"] is not None else "—")
         st.metric("Biggest invoice", pence_to_gbp_str(m["biggest_invoice_pence"]))

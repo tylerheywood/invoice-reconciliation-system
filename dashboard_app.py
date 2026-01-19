@@ -420,7 +420,6 @@ with tabs[0]:
     with c4:
         st.subheader("Signals")
         st.metric("PO confidence", pct_str(m["po_confidence"]))
-        st.metric("Value coverage", pct_str(m["value_coverage_pct"]))
         st.metric("Biggest invoice", pence_to_gbp_str(m["biggest_invoice_pence"]))
         st.metric("Unread emails", str(m["unread"]) if m["unread"] is not None else "—")
         st.metric("Oldest invoice", days_str(m["oldest_days"]))

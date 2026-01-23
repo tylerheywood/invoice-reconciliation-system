@@ -443,9 +443,9 @@ with tabs[1]:
         with c1:
             st.metric("Unreadable (NO_TEXT_LAYER)", str(m["ocr_needed_count"]))
         with c2:
-            st.metric("Ready invoices", str(m["ready_count"]))
-        with c3:
             st.metric("Manual review invoices", str(m["manual_count"]))
+        with c3:
+            st.metric("Ready invoices", str(m["ready_count"]))
 
         st.divider()
 
@@ -456,7 +456,7 @@ with tabs[1]:
                 {
                     "Status": r["status"],
                     "Count": int(r["cnt"]),
-                    "Known £ total": pence_to_gbp_str(r["gross_pence"]),
+                    "Known total (£)": pence_to_gbp_str(r["gross_pence"]),
                 }
             )
 

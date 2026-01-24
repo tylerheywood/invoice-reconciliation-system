@@ -1,0 +1,14 @@
+
+inbox.db
+
+inbox.db-journal
+
+DB backup/
+
+__pycache__/
+
+*.db
+
+*.db-journal
+
+staging/

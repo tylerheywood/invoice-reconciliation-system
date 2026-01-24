@@ -205,7 +205,10 @@ V1 prioritises **trustworthy data over automation**.
 
 ## 👤 Author
 
-Built by an AP practitioner with hands-on experience in:
-- high-volume invoice processing
+Built by an AP Practitioner with hands-on experience in:
+- High-volume invoice processing
 - ERP controls
 - AP risk and exception management
+- Financial forecasting
+- Month end accounting (P&L, Balance sheet, accruals & prepayments)
+- Python and SQL

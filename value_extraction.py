@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -7,6 +8,57 @@ from typing import Optional
 
 from db import get_connection
 from po_detection import index_staging_pdfs  # reuse your deterministic hash->path index
+
+
+# =============================================================================
+# Value Extraction (V1)
+#
+# DEBUG mode:
+#   - Toggle DEBUG below, or set env var ICS_DEBUG=1
+#   - Logs are truncated to avoid megaspam
+# =============================================================================
+
+# Toggle here for local runs
+DEBUG = False
+
+# Optional: allow env override (ICS_DEBUG=1 / true / yes)
+_ENV_DEBUG = os.getenv("ICS_DEBUG", "").strip().lower()
+if _ENV_DEBUG in ("1", "true", "yes", "y", "on"):
+    DEBUG = True
+
+# Debug display controls
+DEBUG_PREVIEW_MAX_LINES = 40
+DEBUG_PREVIEW_MAX_CHARS_PER_LINE = 20
+
+
+def _debug(msg: str) -> None:
+    if DEBUG:
+        print(msg)
+
+
+def _clip_line(s: str, max_chars: int) -> str:
+    s = s.rstrip("\n")
+    if len(s) <= max_chars:
+        return s
+    return s[:max_chars] + "…"
+
+
+def _debug_preview_text(text: str) -> None:
+    """
+    Prints a small, safe preview of extracted text:
+    - first N lines
+    - each line clipped to M chars
+    """
+    if not DEBUG:
+        return
+
+    if not text or not text.strip():
+        _debug("[VALUE] NO TEXT EXTRACTED (blank). Likely NO_TEXT_LAYER / scanned PDF.")
+        return
+
+    _debug(f"[VALUE] First {DEBUG_PREVIEW_MAX_LINES} lines (clipped to {DEBUG_PREVIEW_MAX_CHARS_PER_LINE} chars):")
+    for line in text.splitlines()[:DEBUG_PREVIEW_MAX_LINES]:
+        _debug(_clip_line(line, DEBUG_PREVIEW_MAX_CHARS_PER_LINE))
 
 
 # ----------------------------
@@ -69,11 +121,6 @@ TOTAL_AMOUNT_RE = re.compile(r"\bTOTAL\s+AMOUNT\s*[:\-]?\s*£?\s*" + _MONEY_RE, 
 DUE_AMOUNT_RE = re.compile(r"\bDUE\s+AMOUNT\s*[:\-]?\s*£?\s*" + _MONEY_RE, re.IGNORECASE)
 
 # Rule B: Single total line (STRICT: must include decimals)
-# Examples matched:
-#   "Total £16,618.44"
-#   "Total: 16618.44"
-# Examples NOT matched (on purpose):
-#   "Invoice total: 123456"   <-- likely PO-like integer
 SINGLE_TOTAL_RE = re.compile(r"\bTOTAL\b\s*[:\-]?\s*" + _TOTAL_MONEY_RE + r"\b", re.IGNORECASE)
 
 # Rule C: Common labelled totals (STRICT: must include decimals)
@@ -180,9 +227,8 @@ def run_value_extraction(*, staging_dir: Path) -> dict:
             """
         ).fetchall()
 
-        # TEMP DEBUG (remove later if you want)
-        print(f"[VALUE] Candidate invoices needing extraction: {len(rows)}")
-        print(f"[VALUE] Staging index size: {len(hash_to_path)}")
+        _debug(f"[VALUE] Candidate invoices needing extraction: {len(rows)}")
+        _debug(f"[VALUE] Staging index size: {len(hash_to_path)}")
 
         # Import your existing extractor (keeps one source of truth)
         from po_detection import extract_text_from_pdf  # uses pdfplumber deterministically
@@ -191,8 +237,7 @@ def run_value_extraction(*, staging_dir: Path) -> dict:
             document_hash = r["document_hash"]
             pdf_path = hash_to_path.get(document_hash)
 
-            # TEMP DEBUG
-            print(f"[VALUE] Processing {document_hash} (pdf_found={bool(pdf_path)})")
+            _debug(f"[VALUE] Processing {document_hash} (pdf_found={bool(pdf_path)})")
 
             if not pdf_path:
                 missing_file += 1
@@ -200,19 +245,12 @@ def run_value_extraction(*, staging_dir: Path) -> dict:
 
             text = extract_text_from_pdf(pdf_path)
 
-            # TEMP DEBUG
-            print(f"[VALUE] Extracted text length: {len(text) if text else 0}")
-            if not text or not text.strip():
-                print("[VALUE] NO TEXT EXTRACTED (blank). Likely NO_TEXT_LAYER / scanned PDF.")
-            else:
-                print("[VALUE] First 40 lines:")
-                for line in text.splitlines()[:40]:
-                    print(line)
+            _debug(f"[VALUE] Extracted text length: {len(text) if text else 0}")
+            _debug_preview_text(text)
 
             result = extract_values(text)
 
-            # TEMP DEBUG
-            print(
+            _debug(
                 f"[VALUE] Rule fired: {result.rule} | gross_pence={result.gross_pence} | "
                 f"net={result.net_pence} | vat={result.vat_pence}"
             )
@@ -238,7 +276,9 @@ def run_value_extraction(*, staging_dir: Path) -> dict:
         "staging_index_size": len(hash_to_path),
     }
 
+
 if __name__ == "__main__":
+    # Tiny self-test harness (kept)
     samples = [
         "Invoice total: 123456",
         "Invoice total: 123456.00",

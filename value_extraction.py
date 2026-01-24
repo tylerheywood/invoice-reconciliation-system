@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Optional, List
+from typing import Optional
 
 from db import get_connection
-from fingerprint import sha256_file
 from po_detection import index_staging_pdfs  # reuse your deterministic hash->path index
 
 
@@ -15,7 +13,12 @@ from po_detection import index_staging_pdfs  # reuse your deterministic hash->pa
 # Money parsing helpers
 # ----------------------------
 
+# General money (net/vat/total amount blocks) can be looser
 _MONEY_RE = r"([0-9][0-9,]*)(?:\.(\d{1,2}))?"
+
+# Totals must be stricter to avoid capturing PO-like integers.
+# REQUIRE decimals (e.g. 1234.56). £ symbol is optional.
+_TOTAL_MONEY_RE = r"(?:£\s*)?([0-9][0-9,]*)\.(\d{1,2})"
 
 
 def _money_to_pence(amount_str: str) -> int:
@@ -41,7 +44,6 @@ def _first_match_pence(pattern: re.Pattern[str], text: str) -> Optional[int]:
     m = pattern.search(text)
     if not m:
         return None
-    # m.group(1) is full number part with commas, m.group(2) is decimals if present
     whole = m.group(1)
     dec = m.group(2) or ""
     num = f"{whole}.{dec}" if dec else whole
@@ -66,16 +68,31 @@ VAT_AMOUNT_RE = re.compile(r"\bVAT\s+AMOUNT\s*[:\-]?\s*£?\s*" + _MONEY_RE, re.I
 TOTAL_AMOUNT_RE = re.compile(r"\bTOTAL\s+AMOUNT\s*[:\-]?\s*£?\s*" + _MONEY_RE, re.IGNORECASE)
 DUE_AMOUNT_RE = re.compile(r"\bDUE\s+AMOUNT\s*[:\-]?\s*£?\s*" + _MONEY_RE, re.IGNORECASE)
 
-# Rule B: Single total line e.g. "Total £16,618.44"
-SINGLE_TOTAL_RE = re.compile(r"\bTOTAL\s*£\s*" + _MONEY_RE + r"\b", re.IGNORECASE)
+# Rule B: Single total line (STRICT: must include decimals)
+# Examples matched:
+#   "Total £16,618.44"
+#   "Total: 16618.44"
+# Examples NOT matched (on purpose):
+#   "Invoice total: 123456"   <-- likely PO-like integer
+SINGLE_TOTAL_RE = re.compile(r"\bTOTAL\b\s*[:\-]?\s*" + _TOTAL_MONEY_RE + r"\b", re.IGNORECASE)
+
+# Rule C: Common labelled totals (STRICT: must include decimals)
+LABELED_TOTAL_RE = re.compile(
+    r"\b(?:INVOICE\s+TOTAL|TOTAL\s+DUE|AMOUNT\s+DUE|BALANCE\s+DUE|GRAND\s+TOTAL|TOTAL\s+PAYABLE|TOTAL\s+TO\s+PAY)\b"
+    r"\s*[:\-]?\s*"
+    + _TOTAL_MONEY_RE
+    + r"\b",
+    re.IGNORECASE,
+)
 
 
 def extract_values(text: str) -> ValueResult:
     """
     Deterministic V1 extraction:
-    A) If Net Amount + VAT Amount found, take Total Amount if present else Due Amount.
-    B) Else if "Total £X" found, set gross only.
-    C) Else return all None.
+    A) If Net Amount and/or VAT Amount found, take Total Amount if present else Due Amount.
+    B) Else if "Total ..." found (strict, decimals required), set gross only.
+    C) Else if labelled total found (strict, decimals required), set gross only.
+    D) Else return all None.
     """
     if not text or not text.strip():
         return ValueResult(None, None, None, "NO_TEXT")
@@ -87,13 +104,15 @@ def extract_values(text: str) -> ValueResult:
         gross = _first_match_pence(TOTAL_AMOUNT_RE, text)
         if gross is None:
             gross = _first_match_pence(DUE_AMOUNT_RE, text)
-
-        # If we found net/vat but not gross, still write what we have.
         return ValueResult(net, vat, gross, "EXPLICIT_NET_VAT_BLOCK")
 
     gross_only = _first_match_pence(SINGLE_TOTAL_RE, text)
     if gross_only is not None:
         return ValueResult(None, None, gross_only, "SINGLE_TOTAL_LINE")
+
+    gross_labeled = _first_match_pence(LABELED_TOTAL_RE, text)
+    if gross_labeled is not None:
+        return ValueResult(None, None, gross_labeled, "LABELED_TOTAL")
 
     return ValueResult(None, None, None, "NOT_FOUND")
 
@@ -104,6 +123,19 @@ def extract_values(text: str) -> ValueResult:
 
 def write_value_results(conn, *, document_hash: str, result: ValueResult) -> None:
     cur = conn.cursor()
+
+    # If no text at all, flag for manual lane and stop re-processing forever.
+    if result.rule == "NO_TEXT":
+        cur.execute(
+            """
+            UPDATE inbox_invoice
+            SET po_match_status = 'NO_TEXT_LAYER'
+            WHERE document_hash = ?
+            """,
+            (document_hash,),
+        )
+        return
+
     cur.execute(
         """
         UPDATE inbox_invoice
@@ -125,6 +157,7 @@ def run_value_extraction(*, staging_dir: Path) -> dict:
     - Build hash->path index from staging
     - For present invoices, extract/write values
     - Only process invoices where gross_total IS NULL (or 0) to stay idempotent
+    - Skip NO_TEXT_LAYER so scanned PDFs don't get hammered every run
     """
     hash_to_path = index_staging_pdfs(staging_dir)
 
@@ -142,9 +175,14 @@ def run_value_extraction(*, staging_dir: Path) -> dict:
             FROM inbox_invoice
             WHERE is_currently_present = 1
               AND (gross_total IS NULL OR gross_total = 0)
+              AND (po_match_status IS NULL OR po_match_status <> 'NO_TEXT_LAYER')
             ORDER BY document_hash ASC
             """
         ).fetchall()
+
+        # TEMP DEBUG (remove later if you want)
+        print(f"[VALUE] Candidate invoices needing extraction: {len(rows)}")
+        print(f"[VALUE] Staging index size: {len(hash_to_path)}")
 
         # Import your existing extractor (keeps one source of truth)
         from po_detection import extract_text_from_pdf  # uses pdfplumber deterministically
@@ -153,12 +191,32 @@ def run_value_extraction(*, staging_dir: Path) -> dict:
             document_hash = r["document_hash"]
             pdf_path = hash_to_path.get(document_hash)
 
+            # TEMP DEBUG
+            print(f"[VALUE] Processing {document_hash} (pdf_found={bool(pdf_path)})")
+
             if not pdf_path:
                 missing_file += 1
                 continue
 
             text = extract_text_from_pdf(pdf_path)
+
+            # TEMP DEBUG
+            print(f"[VALUE] Extracted text length: {len(text) if text else 0}")
+            if not text or not text.strip():
+                print("[VALUE] NO TEXT EXTRACTED (blank). Likely NO_TEXT_LAYER / scanned PDF.")
+            else:
+                print("[VALUE] First 40 lines:")
+                for line in text.splitlines()[:40]:
+                    print(line)
+
             result = extract_values(text)
+
+            # TEMP DEBUG
+            print(
+                f"[VALUE] Rule fired: {result.rule} | gross_pence={result.gross_pence} | "
+                f"net={result.net_pence} | vat={result.vat_pence}"
+            )
+
             write_value_results(conn, document_hash=document_hash, result=result)
 
             processed += 1
@@ -179,3 +237,16 @@ def run_value_extraction(*, staging_dir: Path) -> dict:
         "missing_file": missing_file,
         "staging_index_size": len(hash_to_path),
     }
+
+if __name__ == "__main__":
+    samples = [
+        "Invoice total: 123456",
+        "Invoice total: 123456.00",
+        "Invoice total: £123.45",
+        "Total: 99.99",
+        "Total £16,618.44",
+        "Net amount: £100.00\nVAT amount: £20.00\nTotal amount: £120.00",
+    ]
+    for s in samples:
+        r = extract_values(s)
+        print(s.replace("\n", " | "), "=>", r)

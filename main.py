@@ -5,7 +5,8 @@ from value_extraction import run_value_extraction
 from po_validation import run_po_validation
 from po_detection import run_po_detection
 from db import initialise_database, get_connection
-from outlook_scanner import scan_outlook_folder_to_db, STAGING_DIR
+from outlook_scanner import scan_outlook_folder_to_db
+from load_po_master import load_po_master
 
 STAGING_DIR = Path(__file__).resolve().parent / "staging"
 
@@ -25,7 +26,12 @@ def main() -> None:
     initialise_database()
     print_tables()
 
-    # 2) Scan Outlook + persist presence + hashes
+    # 2) Insert current PO Master
+    po_master_summary = load_po_master(Path("data/Purchase_orders.csv"))
+    print("\nPO Master Load:")
+    print(po_master_summary)
+
+    # 3) Scan Outlook + persist presence + hashes
     result = scan_outlook_folder_to_db()
     print()
     print("Scan summary:")
@@ -33,17 +39,17 @@ def main() -> None:
     print("PDF invoices saved:", result["pdfs_saved"])
     print("Staging folder:", result["staging_dir"])
 
-    # 3) PO Detection from staging PDFs
+    # 4) PO Detection from staging PDFs
     po_summary = run_po_detection(staging_dir=STAGING_DIR)
     print("\nPO Detection Results:")
     print(po_summary)
 
-    # 4) PO Validation against po_master
+    # 5) PO Validation against po_master
     validation_summary = run_po_validation()
     print("\nPO Validation Results:")
     print(validation_summary)
 
-    # 5) Value Extraction
+    # 6) Value Extraction
     value_summary = run_value_extraction(staging_dir=STAGING_DIR)
     print("\nValue Extraction Results:")
     print(value_summary)
@@ -51,4 +57,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 

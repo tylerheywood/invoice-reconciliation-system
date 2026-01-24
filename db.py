@@ -229,6 +229,41 @@ def initialise_database() -> None:
                 ON UPDATE CASCADE
                 ON DELETE CASCADE
         );
+        
+        -- =========================================================
+        -- Worklist (derived queue cache + append-only history)
+        -- =========================================================
+
+        -- Current computed queue (one row per invoice)
+        CREATE TABLE IF NOT EXISTS invoice_worklist (
+            document_hash TEXT PRIMARY KEY,
+            next_action TEXT NOT NULL,
+            action_reason TEXT NOT NULL,
+            priority INTEGER NOT NULL,
+            generated_at_utc TEXT NOT NULL,
+            is_currently_present INTEGER NOT NULL CHECK (is_currently_present IN (0,1)),
+
+            FOREIGN KEY (document_hash) REFERENCES inbox_invoice(document_hash)
+                ON UPDATE CASCADE
+                ON DELETE CASCADE
+        );
+
+        -- Append-only snapshots (truthy history of what the queue looked like per run)
+        CREATE TABLE IF NOT EXISTS invoice_worklist_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            document_hash TEXT NOT NULL,
+            next_action TEXT NOT NULL,
+            action_reason TEXT NOT NULL,
+            priority INTEGER NOT NULL,
+            generated_at_utc TEXT NOT NULL,
+            is_currently_present INTEGER NOT NULL CHECK (is_currently_present IN (0,1)),
+
+            FOREIGN KEY (document_hash) REFERENCES inbox_invoice(document_hash)
+                ON UPDATE CASCADE
+                ON DELETE CASCADE
+        );
+
 
         -- =========================================================
         -- Indexes (dashboard + worklist)
@@ -264,6 +299,22 @@ def initialise_database() -> None:
 
         CREATE INDEX IF NOT EXISTS idx_po_supplier
         ON po_master (supplier_account);
+        
+        CREATE INDEX IF NOT EXISTS idx_worklist_action
+        ON invoice_worklist (next_action, priority);
+
+        CREATE INDEX IF NOT EXISTS idx_worklist_present
+        ON invoice_worklist (is_currently_present, priority);
+
+        CREATE INDEX IF NOT EXISTS idx_worklist_hist_run
+        ON invoice_worklist_history (run_id);
+
+        CREATE INDEX IF NOT EXISTS idx_worklist_hist_doc
+        ON invoice_worklist_history (document_hash);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_worklist_hist_run_doc
+        ON invoice_worklist_history (run_id, document_hash);
+
         """
     )
 

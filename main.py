@@ -9,6 +9,7 @@ from po_detection import run_po_detection
 from db import initialise_database, get_connection
 from outlook_scanner import scan_outlook_folder_to_db
 from load_po_master import load_po_master
+from worklist import refresh_worklist_tables
 
 STAGING_DIR = Path(__file__).resolve().parent / "staging"
 
@@ -79,6 +80,11 @@ def main() -> None:
     print(value_summary)
 
     print("\n=== Done ===")
+
+    conn = get_connection()
+    run_id = refresh_worklist_tables(conn)
+    conn.close()
+    print(f"Worklist refreshed. run_id={run_id}")
 
 
 if __name__ == "__main__":

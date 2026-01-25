@@ -1,14 +1,58 @@
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Optional
 
 import pdfplumber  # pip install pdfplumber
 
 from db import get_connection
 from fingerprint import sha256_file
+
+
+# =============================================================================
+# PO Detection (V1)
+#
+# DEBUG mode:
+#   - Toggle DEBUG below, or set env var ICS_DEBUG=1
+#   - Logs are truncated to avoid megaspam
+# =============================================================================
+
+DEBUG = False
+
+_ENV_DEBUG = os.getenv("ICS_DEBUG", "").strip().lower()
+if _ENV_DEBUG in ("1", "true", "yes", "y", "on"):
+    DEBUG = True
+
+DEBUG_PREVIEW_MAX_LINES = 10
+DEBUG_PREVIEW_MAX_CHARS_PER_LINE = 20
+
+
+def _debug(msg: str) -> None:
+    if DEBUG:
+        print(msg)
+
+
+def _clip_line(s: str, max_chars: int) -> str:
+    s = s.rstrip("\n")
+    if len(s) <= max_chars:
+        return s
+    return s[:max_chars] + "…"
+
+
+def _debug_preview_text(text: str) -> None:
+    if not DEBUG:
+        return
+
+    if not text or not text.strip():
+        _debug("[PO] NO TEXT EXTRACTED (blank). Likely NO_TEXT_LAYER / scanned PDF.")
+        return
+
+    _debug(f"[PO] First {DEBUG_PREVIEW_MAX_LINES} lines (clipped to {DEBUG_PREVIEW_MAX_CHARS_PER_LINE} chars):")
+    for line in text.splitlines()[:DEBUG_PREVIEW_MAX_LINES]:
+        _debug(_clip_line(line, DEBUG_PREVIEW_MAX_CHARS_PER_LINE))
 
 
 # ----------------------------
@@ -28,20 +72,81 @@ FILE_MISSING = "FILE_MISSING"
 
 @dataclass(frozen=True)
 class PoDetectionResult:
-    po_numbers: List[str]          # unique, deterministic order
+    po_numbers: List[str]  # unique, deterministic order
     po_count: int
     match_status: str
 
 
-# Adjust this pattern to match your organisation’s PO format.
-# Keep it deterministic, simple, and explainable.
-#
-# Example: QAHE-PO followed by 6 digits
-PO_PATTERN = re.compile(
-    r"\bQAHE\s*-\s*PO\s*-\s*([0-9]{6})\b",
-    re.IGNORECASE
-)
+@dataclass(frozen=True)
+class PoPattern:
+    """
+    A single PO detection variant.
 
+    - regex: finds a PO token
+    - normalizer: returns canonical PO string (QAHE-PO-XXXXXX)
+    - allow: optional predicate to suppress overlaps/false positives
+    """
+    regex: re.Pattern
+    normalizer: Callable[[re.Match], str]
+    allow: Optional[Callable[[str, re.Match], bool]] = None
+
+
+# Treat hyphen-like unicode dashes as hyphens in patterns.
+_DASH_CHARS = r"\-\u2010-\u2015"  # -, ‐-‒–—―
+
+# Canonical token: strictly 6 digits everywhere
+PO_DIGITS = r"([0-9]{6})"
+
+
+def normalize_qahe_po_digits(digits: str) -> str:
+    """
+    Canonical PO format as per po_master: QAHE-PO-XXXXXX
+    """
+    cleaned = re.sub(r"\D+", "", digits)
+    if len(cleaned) != 6:
+        raise ValueError(f"Invalid PO digits: {digits!r}")
+    return f"QAHE-PO-{cleaned}"
+
+
+def allow_bare_po_match(text: str, match: re.Match) -> bool:
+    """
+    Prevent the bare PO matcher ("PO-123456") from also matching inside an explicit
+    QAHE PO like "QAHE - PO - 123456".
+    """
+    start = match.start()
+    if start == 0:
+        return True
+
+    window = text[max(0, start - 16) : start]
+    collapsed = re.sub(rf"[\s{_DASH_CHARS}]+", "", window).upper()
+    return not collapsed.endswith("QAHE")
+
+
+PO_PATTERNS: List[PoPattern] = [
+    PoPattern(
+        re.compile(
+            rf"\bQAHE\s*[{_DASH_CHARS}]\s*PO\s*[{_DASH_CHARS}]\s*{PO_DIGITS}\b",
+            re.IGNORECASE,
+        ),
+        lambda m: normalize_qahe_po_digits(m.group(1)),
+    ),
+    PoPattern(
+        re.compile(
+            rf"\bPurchase\s*Order\s*[:#]?\s*(?:PO\s*[{_DASH_CHARS}]\s*)?{PO_DIGITS}\b",
+            re.IGNORECASE,
+        ),
+        lambda m: normalize_qahe_po_digits(m.group(1)),
+    ),
+    PoPattern(
+        re.compile(rf"\bPO\s*#?\s*:\s*{PO_DIGITS}\b", re.IGNORECASE),
+        lambda m: normalize_qahe_po_digits(m.group(1)),
+    ),
+    PoPattern(
+        re.compile(rf"\bPO\s*[{_DASH_CHARS}]\s*{PO_DIGITS}\b", re.IGNORECASE),
+        lambda m: normalize_qahe_po_digits(m.group(1)),
+        allow=allow_bare_po_match,
+    ),
+]
 
 
 def extract_text_from_pdf(pdf_path: Path) -> str:
@@ -54,48 +159,51 @@ def extract_text_from_pdf(pdf_path: Path) -> str:
         with pdfplumber.open(str(pdf_path)) as pdf:
             for page in pdf.pages:
                 page_text = page.extract_text() or ""
-                # Normalise line endings to keep consistent parsing
                 page_text = page_text.replace("\r\n", "\n").replace("\r", "\n")
                 chunks.append(page_text)
-        text = "\n".join(chunks).strip()
-        return text
+        return "\n".join(chunks).strip()
     except Exception:
-        # For Block 5 initial set, treat any read/extract failure as NO_TEXT_LAYER
         return ""
 
 
 def detect_po_numbers(text: str) -> List[str]:
     """
     Deterministic PO extraction.
-    - Finds matches with PO_PATTERN
-    - Normalises to canonical form (e.g. PO123456)
+    - Finds matches with PO_PATTERNS
+    - Normalises to canonical form (QAHE-PO-XXXXXX)
     - Returns unique values in first-seen order
     """
     if not text:
         return []
 
-    seen = set()
+    seen: set[str] = set()
     ordered: List[str] = []
 
-    for m in PO_PATTERN.finditer(text):
-        digits = m.group(1)
-        po = f"QAHE-PO-{digits}"
+    for pattern in PO_PATTERNS:
+        for match in pattern.regex.finditer(text):
+            if pattern.allow is not None and not pattern.allow(text, match):
+                continue
 
-        if po not in seen:
-            seen.add(po)
-            ordered.append(po)
+            try:
+                po = pattern.normalizer(match)
+            except ValueError:
+                continue
+
+            if po not in seen:
+                seen.add(po)
+                ordered.append(po)
 
     return ordered
 
 
 def classify_po_result(text: str, po_numbers: List[str]) -> PoDetectionResult:
     """
-    Apply Block 5 classification rules.
+    Detection-only classification.
     """
-    if not text or len(text.strip()) == 0:
+    if not text or not text.strip():
         return PoDetectionResult([], 0, NO_TEXT_LAYER)
 
-    if len(po_numbers) == 0:
+    if not po_numbers:
         return PoDetectionResult([], 0, MISSING_PO)
 
     if len(po_numbers) > 1:
@@ -111,8 +219,7 @@ def classify_po_result(text: str, po_numbers: List[str]) -> PoDetectionResult:
 def index_staging_pdfs(staging_dir: Path) -> Dict[str, Path]:
     """
     Deterministically map document_hash -> staged PDF path.
-    If duplicates exist (same hash saved multiple times), we keep the first
-    encountered by sorted path order to stay deterministic.
+    If duplicates exist (same hash saved multiple times), keep first by sorted path order.
     """
     pdf_paths = sorted(staging_dir.glob("*.pdf"))
     mapping: Dict[str, Path] = {}
@@ -134,22 +241,20 @@ def index_staging_pdfs(staging_dir: Path) -> Dict[str, Path]:
 # ----------------------------
 
 def write_po_results(conn, *, document_hash: str, result: PoDetectionResult) -> None:
-    """
-    Update inbox_invoice + replace invoice_po rows for this invoice.
-    """
     cur = conn.cursor()
 
-    # Update invoice classification fields
     cur.execute(
         """
         UPDATE inbox_invoice
-        SET po_count = ?, po_match_status = ?
+        SET
+            po_count = ?,
+            po_match_status = ?,
+            po_validation_status = 'UNVALIDATED'
         WHERE document_hash = ?
         """,
         (result.po_count, result.match_status, document_hash),
     )
 
-    # Replace invoice_po rows (latest truth)
     cur.execute("DELETE FROM invoice_po WHERE document_hash = ?", (document_hash,))
     for po in result.po_numbers:
         cur.execute(
@@ -173,12 +278,11 @@ def run_po_detection(*, staging_dir: Path) -> dict:
     conn = get_connection()
     processed = 0
     missing_file = 0
+    no_text = 0
 
     try:
         conn.execute("BEGIN")
 
-        # Process invoices that are currently present AND not scanned yet.
-        # (You set 'UNSCANNED' on insert, so this is deterministic and safe.)
         cur = conn.cursor()
         rows = cur.execute(
             """
@@ -190,23 +294,35 @@ def run_po_detection(*, staging_dir: Path) -> dict:
             """
         ).fetchall()
 
+        _debug(f"[PO] Candidate invoices needing detection: {len(rows)}")
+        _debug(f"[PO] Staging index size: {len(hash_to_path)}")
+
         for r in rows:
             document_hash = r["document_hash"]
-
             pdf_path = hash_to_path.get(document_hash)
+
+            _debug(f"[PO] Processing {document_hash} (pdf_found={bool(pdf_path)})")
+
             if not pdf_path:
-                # Control implication: DB says invoice exists, but staging doesn't have it.
                 write_po_results(
                     conn,
                     document_hash=document_hash,
-                    result=PoDetectionResult([], 0, "FILE_MISSING")
+                    result=PoDetectionResult([], 0, FILE_MISSING),
                 )
                 missing_file += 1
                 continue
 
             text = extract_text_from_pdf(pdf_path)
+            _debug(f"[PO] Extracted text length: {len(text) if text else 0}")
+            _debug_preview_text(text)
+
             po_numbers = detect_po_numbers(text)
             result = classify_po_result(text, po_numbers)
+
+            _debug(f"[PO] Result: {result.match_status} | po_count={result.po_count} | pos={result.po_numbers}")
+
+            if result.match_status == NO_TEXT_LAYER:
+                no_text += 1
 
             write_po_results(conn, document_hash=document_hash, result=result)
             processed += 1
@@ -222,5 +338,6 @@ def run_po_detection(*, staging_dir: Path) -> dict:
     return {
         "processed": processed,
         "missing_file": missing_file,
+        "no_text_layer": no_text,
         "staging_index_size": len(hash_to_path),
     }

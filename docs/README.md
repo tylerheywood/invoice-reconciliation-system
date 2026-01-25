@@ -462,7 +462,7 @@ For discussion, feedback, or professional enquiries:
 - Email: tyler@aphospital.co.uk
 
 <p align="center">
-  <img src="assets\author.png" alt="Calm AP energy" width="420">
+  <img src="docs/assets/author.png" alt="Calm AP energy" width="420">>
 </p>
 
 <p align="center"><em>

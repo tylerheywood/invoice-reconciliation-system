@@ -1,17 +1,13 @@
+# PyCharm
+.idea/
 
-inbox.db
-
-inbox.db-journal
-
-DB backup/
-
+# Python
 __pycache__/
+*.pyc
 
+# Local data / runtime
 *.db
-
 *.db-journal
-
 staging/
-
 run_main.local.ps1
 task_main.log

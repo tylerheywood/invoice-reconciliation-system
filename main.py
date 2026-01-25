@@ -100,6 +100,21 @@ def main() -> None:
     conn.close()
     print(f"Worklist refreshed. run_id={run_id}")
 
+    # Optional publish step (controlled by env vars)
+    from publisher import PublishConfig, run_publish
+    publish_cfg = PublishConfig(
+        enabled=os.getenv("ICS_PUBLISH", "").lower() in ("1", "true", "yes"),
+        db_path=Path("inbox.db"),
+        out_path=Path("exports/snapshot.json"),
+        vps_host=os.getenv("ICS_VPS_HOST", ""),
+        remote_dir=os.getenv("ICS_VPS_REMOTE_DIR", "/var/www/ics-data"),
+    )
+    if publish_cfg.enabled and publish_cfg.vps_host:
+        run_publish(publish_cfg, log=dprint)
+        print(f"Snapshot pushed to dashboard.")
+    else:
+        print("Failed pushing to dashboard.")
+
 
 if __name__ == "__main__":
     main()

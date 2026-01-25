@@ -1,17 +1,15 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import os
 from pathlib import Path
-
-from value_extraction import run_value_extraction
-from po_validation import run_po_validation
-from po_detection import run_po_detection
-from db import initialise_database, get_connection
-from outlook_scanner import scan_outlook_folder_to_db
-from load_po_master import load_po_master
-from worklist import refresh_worklist_tables
-
-STAGING_DIR = Path(__file__).resolve().parent / "staging"
+'''
+Remaining task list before V1 sign-off:
+- Multi-folder scanning implementation 
+- Dashboard exposure strategy (VPS / web)
+- Worklist output
+- Scanner abstraction cleanup (potentially v1.1)
+'''
 
 # -----------------------------------------------------------------------------
 # Debug toggle
@@ -19,16 +17,30 @@ STAGING_DIR = Path(__file__).resolve().parent / "staging"
 #   - override with env var: ICS_DEBUG=1
 # -----------------------------------------------------------------------------
 DEBUG = False
-
 _ENV_DEBUG = os.getenv("ICS_DEBUG", "").strip().lower()
 if _ENV_DEBUG in ("1", "true", "yes", "y", "on"):
     DEBUG = True
 
-
 def dprint(*args, **kwargs) -> None:
-    """Debug-only print."""
     if DEBUG:
         print(*args, **kwargs)
+
+print(f"[BOOT] {datetime.now(timezone.utc).isoformat()} main starting", flush=True)
+dprint("[DEBUG] Enabled via ICS_DEBUG=1")
+
+from outlook_scanner import scan_outlook_to_db
+from po_validation import run_po_validation
+from po_detection import run_po_detection
+from db import initialise_database, get_connection
+from load_po_master import load_po_master
+from worklist import refresh_worklist_tables
+from value_extraction import run_value_extraction
+
+print("Starting Stage 1: PO Master Load", flush=True)
+
+
+STAGING_DIR = Path(__file__).resolve().parent / "staging"
+
 
 
 def print_tables() -> None:
@@ -53,8 +65,10 @@ def main() -> None:
     print(po_master_summary)
 
     # 3) Scan Outlook + persist presence + hashes
-    print("\n--- Stage 2: Outlook Scan ---")
-    result = scan_outlook_folder_to_db()
+    print("\n--- Stage 2: Outlook Scan ---", flush=True)
+    print("[SCAN] starting outlook scan...", flush=True)
+    result = scan_outlook_to_db()
+    print("[SCAN] completed outlook scan", flush=True)
     print(
         {
             "messages_seen": result.get("messages_seen"),

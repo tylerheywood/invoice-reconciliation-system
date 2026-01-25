@@ -361,11 +361,6 @@ The worklist answers one question only:
 Each invoice is mapped to one of the following actions:
 
 - `READY TO POST`
-- `REQUEST PO`
-- `CHECK PO MASTER`
-- `CHECK PO STATUS`
-- `SELECT CORRECT PO`
-- `ENTER / CONFIRM VALUE`
 - `MANUAL REVIEW`
 
 Each row also includes an **action reason**, explaining *why* the action was assigned
@@ -462,7 +457,7 @@ For discussion, feedback, or professional enquiries:
 - Email: tyler@aphospital.co.uk
 
 <p align="center">
-  <img src="assets\author.png" alt="Calm AP energy" width="420">
+  <img src="assets/author.png" alt="Calm AP energy" width="420">>
 </p>
 
 <p align="center"><em>

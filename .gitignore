@@ -12,3 +12,6 @@ __pycache__/
 *.db-journal
 
 staging/
+
+run_main.local.ps1
+task_main.log

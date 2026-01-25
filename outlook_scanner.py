@@ -14,14 +14,13 @@ Notes:
 - Read-only against Outlook (no moving emails yet)
 - Deterministic + auditable
 """
-from po_detection import run_po_detection
+
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
-import win32com.client  # pip install pywin32
 
 from db import get_connection, initialise_database
 from fingerprint import sha256_file
@@ -32,12 +31,26 @@ from fingerprint import sha256_file
 # ----------------------------
 
 MAILBOX_NAME = "tyler@aphospital.co.uk"
-FOLDER_PATH = "Inbox"  # e.g. "Inbox/Invoices/New"
-MAX_ITEMS = 50
+MAX_ITEMS = 50  # per-folder cap
 
 BASE_DIR = Path(__file__).resolve().parent
 STAGING_DIR = BASE_DIR / "staging"
 STAGING_DIR.mkdir(exist_ok=True)
+
+# Controlled folder set (V1)
+# Keeping commented folders here for future USE.
+TRACKED_FOLDERS = [
+    "Inbox",
+    # "To be reviewed",
+    # "In review",
+    # "To be processed",
+    # "Processed invoices",
+]
+
+# Debug toggle
+import os
+_ENV_DEBUG = os.getenv("ICS_DEBUG", "").strip().lower()
+DEBUG = _ENV_DEBUG in ("1", "true", "yes", "y", "on")
 
 
 # ----------------------------
@@ -58,7 +71,7 @@ class PdfAttachment:
 # ----------------------------
 
 def now_iso_utc() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def safe_filename(name: str) -> str:
@@ -77,6 +90,7 @@ def short_entry_id(entry_id: str, n: int = 12) -> str:
 # ----------------------------
 
 def get_outlook_namespace():
+    import win32com.client  # pip install pywin32 - imported here to avoid task scheduler/COM hangs
     outlook = win32com.client.Dispatch("Outlook.Application")
     return outlook.GetNamespace("MAPI")
 
@@ -99,9 +113,12 @@ def get_mailbox(ns, mailbox_name: str):
 
 
 def get_folder_by_path(store, folder_path: str):
+    """
+    folder_path supports subfolders: "Inbox/Invoices/New"
+    """
     parts = [p.strip() for p in folder_path.split("/") if p.strip()]
     if not parts:
-        raise ValueError("FOLDER_PATH is empty")
+        raise ValueError("Folder path is empty")
 
     folder = store.Folders.Item(parts[0])
     for part in parts[1:]:
@@ -128,6 +145,7 @@ def safe_sender_email(mail_item) -> str:
 def iter_pdf_file_attachments(msg) -> Iterable[tuple[int, object, str, int]]:
     """
     Yield tuples: (attachment_index, attachment_obj, file_name, size_bytes)
+
     Filters:
       - Attachment.Type == 1 (real file attachment)
       - filename ends with .pdf
@@ -167,13 +185,13 @@ def save_and_hash_pdf(entry_id: str, attachment_index: int, att_obj, file_name: 
 
 
 # ----------------------------
-# DB helpers (Block 4)
+# DB helpers (presence + upserts)
 # ----------------------------
 
 def begin_scan(conn, scan_ts: str) -> None:
     """
     Start-of-scan presence reset.
-    Deterministic: anything not seen this scan remains 0.
+    Deterministic: anything not seen across ALL tracked folders stays 0.
     """
     cur = conn.cursor()
     cur.execute("UPDATE inbox_message SET is_currently_present = 0")
@@ -250,8 +268,8 @@ def upsert_invoice(
     source_folder_path: str,
 ) -> None:
     """
-    Only Block 4 fields (presence + linkage + timestamps).
-    PO/supplier/amounts/review fields are left NULL/default for now.
+    Only presence + linkage + timestamps.
+    Other fields remain NULL/default.
     """
     cur = conn.cursor()
     cur.execute(
@@ -299,63 +317,93 @@ def upsert_invoice(
         ),
     )
 
-def scan_outlook_folder_to_db() -> dict:
+
+# ----------------------------
+# Folder targeting + scan execution
+# ----------------------------
+
+def iter_tracked_folders(store, folder_paths: list[str]):
+    """
+    Yield (folder_path, folder_obj) for each tracked folder path.
+    Raises a clear error if a configured folder path is invalid.
+    """
+    for path in folder_paths:
+        folder = get_folder_by_path(store, path)
+        yield path, folder
+
+
+def scan_outlook_to_db(
+    *,
+    mailbox_name: str = MAILBOX_NAME,
+    tracked_folders: list[str] = TRACKED_FOLDERS,
+    max_items_per_folder: int = MAX_ITEMS,
+) -> dict:
+    """
+    Scan all tracked folders and persist results into SQLite.
+
+    V1 behaviour:
+    - Presence reset happens ONCE per scan (across all folders)
+    - An item is 'currently present' if seen in ANY tracked folder during this scan
+    - Read-only against Outlook (no moving emails yet)
+    """
+    if not tracked_folders:
+        raise ValueError("TRACKED_FOLDERS is empty. Configure at least one folder path.")
+
     initialise_database()
 
     ns = get_outlook_namespace()
-    store = get_mailbox(ns, MAILBOX_NAME)
-    folder = get_folder_by_path(store, FOLDER_PATH)
+    store = get_mailbox(ns, mailbox_name)
 
-    current_location = FOLDER_PATH
     scan_ts = now_iso_utc()
-
     messages_seen = 0
     pdfs_saved = 0
+    folders_scanned = 0
 
     conn = get_connection()
     try:
         conn.execute("BEGIN")
         begin_scan(conn, scan_ts)
 
-        for msg in iter_latest_messages(folder, MAX_ITEMS):
-            messages_seen += 1
+        for folder_path, folder in iter_tracked_folders(store, tracked_folders):
+            folders_scanned += 1
 
-            entry_id = str(msg.EntryID)
-            received = str(getattr(msg, "ReceivedTime", "") or "")
-            sender = safe_sender_email(msg)
-            subject = str(getattr(msg, "Subject", "") or "")
-            attachment_count = int(getattr(msg.Attachments, "Count", 0))
+            for msg in iter_latest_messages(folder, max_items_per_folder):
+                messages_seen += 1
 
-            pdf_count_for_message = 0
+                entry_id = str(msg.EntryID)
+                received = str(getattr(msg, "ReceivedTime", "") or "")
+                sender = safe_sender_email(msg)
+                subject = str(getattr(msg, "Subject", "") or "")
+                attachment_count = int(getattr(msg.Attachments, "Count", 0))
 
-            # upsert message (set attachment_count to PDF count, not raw attachments)
-            # so we’ll calculate pdf_count first
-            for j, att, name, size in iter_pdf_file_attachments(msg):
-                pdf_count_for_message += 1
+                pdf_count_for_message = 0
 
-                pdf = save_and_hash_pdf(entry_id, j, att, name)
-                pdfs_saved += 1
+                for j, att, name, size in iter_pdf_file_attachments(msg):
+                    pdf_count_for_message += 1
 
-                upsert_message(
-                    conn,
-                    message_id=entry_id,
-                    current_location=current_location,
-                    scan_ts=scan_ts,
-                    received_datetime=received or None,
-                    sender_address=sender or None,
-                    subject=subject or None,
-                    has_attachments=attachment_count > 0,
-                    attachment_count=pdf_count_for_message,  # IMPORTANT: PDFs only
-                )
+                    pdf = save_and_hash_pdf(entry_id, j, att, name)
+                    pdfs_saved += 1
 
-                upsert_invoice(
-                    conn,
-                    document_hash=pdf.document_hash,
-                    message_id=entry_id,
-                    attachment_file_name=name,
-                    scan_ts=scan_ts,
-                    source_folder_path=current_location,
-                )
+                    upsert_message(
+                        conn,
+                        message_id=entry_id,
+                        current_location=folder_path,
+                        scan_ts=scan_ts,
+                        received_datetime=received or None,
+                        sender_address=sender or None,
+                        subject=subject or None,
+                        has_attachments=attachment_count > 0,
+                        attachment_count=pdf_count_for_message,  # PDFs only
+                    )
+
+                    upsert_invoice(
+                        conn,
+                        document_hash=pdf.document_hash,
+                        message_id=entry_id,
+                        attachment_file_name=name,
+                        scan_ts=scan_ts,
+                        source_folder_path=folder_path,
+                    )
 
         conn.commit()
 
@@ -370,12 +418,42 @@ def scan_outlook_folder_to_db() -> dict:
         "pdfs_saved": pdfs_saved,
         "staging_dir": str(STAGING_DIR),
         "scan_ts": scan_ts,
-        "mailbox": MAILBOX_NAME,
-        "folder": FOLDER_PATH,
+        "mailbox": mailbox_name,
+        "folders_scanned": folders_scanned,
+        "tracked_folders": list(tracked_folders),
+        "max_items_per_folder": int(max_items_per_folder),
     }
 
 
+# ----------------------------
+# Placeholder: Recurring scanner (NOT ACTIVE YET)
+# ----------------------------
+
+def run_recurring_scanner(
+    *,
+    interval_seconds: int,
+    mailbox_name: str = MAILBOX_NAME,
+    tracked_folders: list[str] = TRACKED_FOLDERS,
+    max_items_per_folder: int = MAX_ITEMS,
+) -> None:
+    """
+    Placeholder for a recurring scanner loop.
+
+    IMPORTANT:
+    - This is intentionally NOT wired into __main__ yet.
+    - Will plug this into a scheduler later (Task Scheduler/systemd/cron/etc).
+
+    When activated, it would:
+    - run scan_outlook_to_db() every interval_seconds
+    - keep a deterministic cadence
+    - log run summaries
+    """
+    raise NotImplementedError(
+        "Recurring scanner is not active in V1 yet. "
+        "Use OS-level scheduling or explicitly wire this in later."
+    )
 
 
 if __name__ == "__main__":
-    scan_outlook_folder_to_db()
+    # V1: one-shot scan only
+    scan_outlook_to_db()

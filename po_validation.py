@@ -22,6 +22,11 @@ def run_po_validation() -> dict:
     Writes:
     - po_validation_status (truth of validation)
     - ready_to_post (canonical dashboard/worklist flag)
+
+    V1 live-validation behaviour:
+    - Re-validates all currently-present SINGLE_PO_DETECTED invoices each run
+      (so PO status changes in po_master are reflected in inbox truth + worklist).
+    - Excludes invoices with posted_datetime not null (treated as terminal).
     """
     conn = get_connection()
     cur = conn.cursor()
@@ -32,11 +37,28 @@ def run_po_validation() -> dict:
         UPDATE inbox_invoice
         SET ready_to_post = 0
         WHERE is_currently_present = 1
+          AND posted_datetime IS NULL
           AND (po_match_status IS NULL OR po_match_status <> ?)
         """,
         (STATUS_SINGLE_PO_DETECTED,),
     )
 
+    # Live validation approach:
+    # Reset current SINGLE_PO_DETECTED invoices back to UNVALIDATED each run,
+    # then compute the correct status based on latest po_master truth.
+    cur.execute(
+        """
+        UPDATE inbox_invoice
+        SET po_validation_status = ?,
+            ready_to_post = 0
+        WHERE is_currently_present = 1
+          AND posted_datetime IS NULL
+          AND po_match_status = ?
+        """,
+        (STATUS_UNVALIDATED, STATUS_SINGLE_PO_DETECTED),
+    )
+
+    # Validate ALL current SINGLE_PO_DETECTED invoices (not just UNVALIDATED)
     cur.execute(
         """
         SELECT
@@ -48,10 +70,11 @@ def run_po_validation() -> dict:
             ON ii.document_hash = ip.document_hash
         LEFT JOIN po_master pm
             ON ip.po_number = pm.po_number
-        WHERE ii.po_match_status = ?
-          AND ii.po_validation_status = ?
+        WHERE ii.is_currently_present = 1
+          AND ii.posted_datetime IS NULL
+          AND ii.po_match_status = ?
         """,
-        (STATUS_SINGLE_PO_DETECTED, STATUS_UNVALIDATED),
+        (STATUS_SINGLE_PO_DETECTED,),
     )
 
     rows = cur.fetchall()

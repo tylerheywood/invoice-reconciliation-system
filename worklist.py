@@ -324,22 +324,22 @@ def _classify_invoice(row: sqlite3.Row) -> Tuple[str, str, int]:
 
     # 1) No text layer (scanned/blocked)
     if po_match_status == STATUS_NO_TEXT_LAYER:
-        return ("MANUAL REVIEW", "NO TEXT LAYER", 10)
+        return ("MANUAL REVIEW", "NO TEXT LAYER", 80)
 
     # 2) PO missing
     if po_match_status == STATUS_MISSING_PO:
-        return ("REQUEST PO", "MISSING PO", 20)
+        return ("MANUAL REVIEW", "MISSING PO", 20)
 
     # 3) Multiple POs
     if po_match_status == STATUS_MULTIPLE_POS:
-        return ("SELECT CORRECT PO", "MULTIPLE POS DETECTED", 30)
+        return ("MANUAL REVIEW", "MULTIPLE POS DETECTED", 30)
 
     # 4) Single PO detected but validation blocks posting
     if po_match_status == STATUS_SINGLE_PO_DETECTED:
         if po_validation_status == STATUS_PO_NOT_IN_MASTER:
-            return ("CHECK PO MASTER", "PO NOT IN MASTER", 40)
+            return ("MANUAL REVIEW", "PO NOT IN MASTER", 40)
         if po_validation_status == STATUS_PO_NOT_OPEN:
-            return ("CHECK PO STATUS", "PO NOT OPEN", 50)
+            return ("MANUAL REVIEW", "PO NOT OPEN", 20)
         if po_validation_status == STATUS_UNVALIDATED:
             return ("MANUAL REVIEW", "PO NOT VALIDATED YET", 60)
 
@@ -358,7 +358,7 @@ def _classify_invoice(row: sqlite3.Row) -> Tuple[str, str, int]:
 
     # 6) Gross missing => needs human value entry/confirmation
     if _values_missing(row):
-        return ("ENTER / CONFIRM VALUE", "GROSS TOTAL NOT EXTRACTED", 70)
+        return ("MANUAL REVIEW", "GROSS TOTAL NOT EXTRACTED", 70)
 
     # 7) Catch-all
     return ("MANUAL REVIEW", "UNCLASSIFIED STATE", 85)

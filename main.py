@@ -35,7 +35,6 @@ from db import initialise_database, get_connection
 from load_po_master import load_po_master
 from worklist import refresh_worklist_tables
 from value_extraction import run_value_extraction
-print("=== AP Inbox Control — Pipeline Run ===", flush=True)
 
 print("Starting Stage 1: PO Master Load", flush=True)
 

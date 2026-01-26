@@ -170,6 +170,27 @@ tr:hover td { background: #020617; }
 .nowrap { white-space: nowrap; }
 .right { text-align: right; }
 
+/* Sortable header affordance */
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+th.sortable:hover {
+  background: #020617;
+}
+.sort-ind {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--text-soft);
+  opacity: 0.85;
+}
+.sort-hint {
+  margin-left: 6px;
+  font-size: 10px;
+  opacity: 0.35;
+}
+
 .controls {
   display: flex;
   gap: 12px;
@@ -304,7 +325,7 @@ select {
   <div class="panel" id="worklist">
     <div class="row">
       <h3 style="margin:10px 0;">Worklist</h3>
-      <div class="muted">Operational queue of items needing manual action. Sorted by priority (high → low).</div>
+      <div class="muted">Operational queue of items needing manual action. Sorted by priority (high → low) unless you click a column to sort.</div>
 
       <div class="controls">
         <div class="control">
@@ -324,6 +345,7 @@ select {
         </div>
 
         <div class="muted small" id="wl_count">—</div>
+        <div class="muted small" id="wl_sort_label" style="margin-left:auto;">Sort: Priority ↓</div>
       </div>
 
       <div style="margin-top:10px; overflow:auto;">
@@ -371,6 +393,71 @@ select {
     return String(h).slice(0, 10);
   }
 
+  // ---- Worklist sorting state (persists across rerenders) ----
+  const WORKLIST_SORT_DEFAULT = { key: "priority", dir: "desc" };
+  let worklistSort = { ...WORKLIST_SORT_DEFAULT };
+
+  function setSort(key) {
+    if (worklistSort.key === key) {
+      worklistSort.dir = (worklistSort.dir === "asc") ? "desc" : "asc";
+    } else {
+      worklistSort.key = key;
+      // sensible defaults per column
+      if (key === "priority") worklistSort.dir = "desc";
+      else if (key === "generated_at_utc") worklistSort.dir = "desc";
+      else if (key === "is_currently_present") worklistSort.dir = "desc";
+      else worklistSort.dir = "asc";
+    }
+  }
+
+  function sortLabelFor(key) {
+    const map = {
+      priority: "Priority",
+      next_action: "Next action",
+      action_reason: "Reason",
+      sender_domain: "Sender domain",
+      email_subject: "Email subject",
+      attachment_name: "Attachment",
+      generated_at_utc: "Generated",
+      is_currently_present: "Present",
+      document_hash: "Doc hash"
+    };
+    return map[key] || key;
+  }
+
+  function setSortLabel() {
+    const arrow = (worklistSort.dir === "asc") ? "↑" : "↓";
+    const label = `Sort: ${sortLabelFor(worklistSort.key)} ${arrow}`;
+    const el = document.getElementById("wl_sort_label");
+    if (el) el.textContent = label;
+  }
+
+  function coerceForSort(row, key) {
+    const v = row[key];
+
+    if (key === "priority") return Number(v ?? 0);
+
+    if (key === "generated_at_utc") {
+      const t = Date.parse(v || "");
+      return isNaN(t) ? 0 : t;
+    }
+
+    if (key === "is_currently_present") {
+      // snapshot uses 1/0, display uses Yes/No
+      return Number(v ?? 0);
+    }
+
+    // strings (case-insensitive)
+    if (v === null || v === undefined) return "";
+    return String(v).toLowerCase();
+  }
+
+  function compare(a, b) {
+    if (a < b) return -1;
+    if (a > b) return 1;
+    return 0;
+  }
+
   // ---- Worklist rendering ----
   function renderWorklist(data) {
     const presentOnly = document.getElementById("wl_present_only").checked;
@@ -387,13 +474,21 @@ select {
       return true;
     });
 
-    // Sort: priority DESC, then generated_at DESC
-    rows.sort((a,b) => {
-      const pa = Number(a.priority ?? 0), pb = Number(b.priority ?? 0);
-      if (pb !== pa) return pb - pa;
-      const ta = Date.parse(a.generated_at_utc || "") || 0;
-      const tb = Date.parse(b.generated_at_utc || "") || 0;
-      return tb - ta;
+    // Primary sort: chosen column
+    rows.sort((ra, rb) => {
+      const va = coerceForSort(ra, worklistSort.key);
+      const vb = coerceForSort(rb, worklistSort.key);
+      const base = compare(va, vb);
+      const dirMul = (worklistSort.dir === "asc") ? 1 : -1;
+      if (base !== 0) return base * dirMul;
+
+      // tie-breakers: priority desc, generated desc (keeps queue stable)
+      const pA = Number(ra.priority ?? 0), pB = Number(rb.priority ?? 0);
+      if (pB !== pA) return pB - pA;
+
+      const tA = Date.parse(ra.generated_at_utc || "") || 0;
+      const tB = Date.parse(rb.generated_at_utc || "") || 0;
+      return tB - tA;
     });
 
     const head = document.getElementById("wl_head");
@@ -404,16 +499,37 @@ select {
     body.innerHTML = "";
 
     const cols = [
-      { key: "priority", label: "Priority", cls: "right nowrap" },
-      { key: "next_action", label: "Next action", cls: "wrap" },
-      { key: "action_reason", label: "Reason", cls: "wrap" },
-      { key: "generated_at_utc", label: "Generated", cls: "nowrap" },
-      { key: "is_currently_present", label: "Present", cls: "nowrap" },
-      { key: "document_hash", label: "Doc hash", cls: "nowrap" }
+      { key: "priority", label: "Priority", cls: "right nowrap", sortable: true },
+      { key: "next_action", label: "Next action", cls: "wrap", sortable: true },
+      { key: "action_reason", label: "Reason", cls: "wrap", sortable: true },
+      { key: "sender_domain", label: "Sender domain", cls: "nowrap", sortable: true },
+      { key: "email_subject", label: "Email subject", cls: "wrap", sortable: true },
+      { key: "attachment_name", label: "Attachment", cls: "nowrap", sortable: true },
+      { key: "generated_at_utc", label: "Generated", cls: "nowrap", sortable: true },
+      { key: "is_currently_present", label: "Present", cls: "nowrap", sortable: true },
+      { key: "document_hash", label: "Doc hash", cls: "nowrap", sortable: true }
     ];
 
-    head.innerHTML = "<tr>" + cols.map(c => `<th>${c.label}</th>`).join("") + "</tr>";
+    head.innerHTML = "<tr>" + cols.map(c => {
+      const isActive = (worklistSort.key === c.key);
+      const arrow = isActive ? (worklistSort.dir === "asc" ? "↑" : "↓") : "";
+      const ind = isActive ? `<span class="sort-ind">${arrow}</span>` : `<span class="sort-hint">↕</span>`;
+      const cls = c.sortable ? "sortable" : "";
+      return `<th class="${cls}" data-sort="${c.sortable ? c.key : ""}">${c.label}${ind}</th>`;
+    }).join("") + "</tr>";
 
+    // wire header click handlers (rebind each render)
+    head.querySelectorAll("th.sortable").forEach(th => {
+      th.addEventListener("click", () => {
+        const key = th.getAttribute("data-sort");
+        if (!key) return;
+        setSort(key);
+        setSortLabel();
+        renderWorklist(data); // rerender using same snapshot, no refetch
+      });
+    });
+
+    setSortLabel();
     count.textContent = `${rows.length} item(s)`;
 
     if (rows.length === 0) {
@@ -506,7 +622,7 @@ select {
         ageTbody.appendChild(tr);
       });
 
-      // Worklist
+      // Worklist (uses current snapshot, sortable in-browser)
       renderWorklist(data);
 
       // Trends (optional)
@@ -545,7 +661,7 @@ select {
     });
   });
 
-  // Worklist filters rerender (no refetch)
+  // Worklist filters rerender (no need to refetch, but simplest to keep consistent)
   document.getElementById("wl_present_only").addEventListener("change", loadSnapshot);
   document.getElementById("wl_min_priority").addEventListener("change", loadSnapshot);
 

@@ -5,8 +5,6 @@ import os
 from pathlib import Path
 '''
 Remaining task list before V1 sign-off:
-- Multi-folder scanning implementation 
-- Dashboard exposure strategy (VPS / web)
 - Worklist output
 - Scanner abstraction cleanup (potentially v1.1)
 '''
@@ -99,6 +97,20 @@ def main() -> None:
     run_id = refresh_worklist_tables(conn)
     conn.close()
     print(f"Worklist refreshed. run_id={run_id}")
+
+    # Optional publish step (controlled by env vars)
+    from publisher import PublishConfig, run_publish
+    publish_cfg = PublishConfig(
+        enabled=os.getenv("ICS_PUBLISH", "").lower() in ("1", "true", "yes"),
+        db_path=Path("inbox.db"),
+        out_path=Path("exports/snapshot.json"),
+        vps_host=os.getenv("ICS_VPS_HOST", ""),
+        remote_dir=os.getenv("ICS_VPS_REMOTE_DIR", "/var/www/ics-data"),
+    )
+    if publish_cfg.enabled and publish_cfg.vps_host:
+        run_publish(publish_cfg, log=print)  # <-- key fix: don't hide errors
+    else:
+        print("[PUBLISH] Skipped (disabled or missing host)")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,3 @@
-# worklist.py
 """
 V1 Worklist (Joblist) for ICS
 
@@ -10,21 +9,30 @@ V1 Worklist (Joblist) for ICS
     - invoice_worklist (current cache, full-replace per run)
     - invoice_worklist_history (append-only snapshots per run)
 
-This is the V1 "B" model:
+V1 model:
 - No manual removal / dismissal state
 - Items disappear when underlying truth changes or invoice is no longer present
+
+Worklist usability (Outlook):
+- Rows include identifiers that help AP users find the invoice in Outlook:
+    - sender_domain  (best-effort; falls back to "internal" for Exchange senders)
+    - email_subject
+    - attachment_name
+    - received_datetime
 
 Debug:
 - Controlled via ICS_DEBUG env var
 - Prints summary metric for action changes vs previous run (history table)
 """
 
+from __future__ import annotations
+
 import os
 import sqlite3
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import uuid
-from typing import Tuple, List, Dict, Any
+from typing import Tuple, List, Dict, Any, Optional
 
 from po_validation import (
     STATUS_UNVALIDATED,
@@ -47,6 +55,14 @@ STATUS_MULTIPLE_POS = "MULTIPLE_POS"
 @dataclass(frozen=True)
 class WorkItem:
     document_hash: str
+
+    # Outlook identifiers
+    sender_domain: str | None
+    email_subject: str | None
+    attachment_name: str | None
+    received_datetime: str | None
+
+    # Worklist classification
     next_action: str
     action_reason: str
     priority: int
@@ -60,6 +76,35 @@ def _utc_now_iso() -> str:
 
 def _new_run_id() -> str:
     return uuid.uuid4().hex
+
+
+def _extract_sender_domain(sender_address: Optional[str]) -> Optional[str]:
+    """
+    Extract domain from a sender identifier.
+
+    Cases:
+    - SMTP sender: "john@acme.com" -> "acme.com"
+    - Exchange legacy DN (common for internal/self-sent): "/O=EXCH.../CN=..." -> "internal"
+    - Anything else -> None
+    """
+    if not sender_address:
+        return None
+
+    s = str(sender_address).strip()
+    if not s:
+        return None
+
+    # Exchange "legacy DN" style string (self-sent / internal mailbox)
+    # Example: /O=EXCHANGELABS/OU=.../CN=RECIPIENTS/CN=...
+    if s.startswith("/O=") or s.startswith("\\O="):
+        return "internal"
+
+    # Normal SMTP
+    if "@" in s:
+        dom = s.split("@", 1)[1].strip().lower()
+        return dom or None
+
+    return None
 
 
 def build_worklist(
@@ -77,12 +122,14 @@ def build_worklist(
     Notes:
     - Does NOT write to DB.
     - Precedence based: first blocker wins.
+    - Includes Outlook identifiers so AP users can locate the invoice in Outlook.
     """
     generated_at_utc = _utc_now_iso()
     run_id = _new_run_id()
 
     where_clause = "WHERE ii.is_currently_present = 1" if only_currently_present else ""
 
+    # Pull invoice truth + message identifiers in one query.
     rows = conn.execute(
         f"""
         SELECT
@@ -93,8 +140,16 @@ def build_worklist(
             ii.ready_to_post,
             ii.net_total,
             ii.vat_total,
-            ii.gross_total
+            ii.gross_total,
+
+            -- Outlook-facing identifiers
+            ii.attachment_file_name AS attachment_name,
+            im.sender_address       AS sender_address,
+            im.subject              AS email_subject,
+            im.received_datetime    AS received_datetime
         FROM inbox_invoice ii
+        LEFT JOIN inbox_message im
+               ON im.message_id = ii.message_id
         {where_clause}
         """
     ).fetchall()
@@ -106,9 +161,15 @@ def build_worklist(
         if not include_ready_to_post and next_action == "READY TO POST":
             continue
 
+        sender_domain = _extract_sender_domain(r["sender_address"])
+
         items.append(
             WorkItem(
                 document_hash=r["document_hash"],
+                sender_domain=sender_domain,
+                email_subject=r["email_subject"],
+                attachment_name=r["attachment_name"],
+                received_datetime=r["received_datetime"],
                 next_action=next_action,
                 action_reason=action_reason,
                 priority=priority,
@@ -117,7 +178,8 @@ def build_worklist(
             )
         )
 
-    # Stable ordering (deterministic)
+    # Stable ordering (deterministic): priority then hash
+    # (Priority semantics: lower number = earlier attention in the queue)
     items.sort(key=lambda x: (x.priority, x.document_hash))
     return run_id, items
 
@@ -148,17 +210,25 @@ def refresh_worklist_tables(
             """
             INSERT INTO invoice_worklist (
                 document_hash,
+                sender_domain,
+                email_subject,
+                attachment_name,
+                received_datetime,
                 next_action,
                 action_reason,
                 priority,
                 generated_at_utc,
                 is_currently_present
             )
-            VALUES (?, ?, ?, ?, ?, ?);
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
             """,
             [
                 (
                     i.document_hash,
+                    i.sender_domain,
+                    i.email_subject,
+                    i.attachment_name,
+                    i.received_datetime,
                     i.next_action,
                     i.action_reason,
                     i.priority,
@@ -174,18 +244,26 @@ def refresh_worklist_tables(
             INSERT INTO invoice_worklist_history (
                 run_id,
                 document_hash,
+                sender_domain,
+                email_subject,
+                attachment_name,
+                received_datetime,
                 next_action,
                 action_reason,
                 priority,
                 generated_at_utc,
                 is_currently_present
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?);
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
             """,
             [
                 (
                     run_id,
                     i.document_hash,
+                    i.sender_domain,
+                    i.email_subject,
+                    i.attachment_name,
+                    i.received_datetime,
                     i.next_action,
                     i.action_reason,
                     i.priority,
@@ -204,13 +282,18 @@ def refresh_worklist_tables(
 
 def fetch_current_worklist(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     """
-    Convenience reader (dashboard/CLI): returns dict rows from invoice_worklist,
-    ordered by priority then document_hash.
+    Convenience reader (dashboard/CLI): returns dict rows from invoice_worklist.
+
+    Ordering is priority then document_hash (priority semantics: lower = earlier attention).
     """
     rows = conn.execute(
         """
         SELECT
             document_hash,
+            sender_domain,
+            email_subject,
+            attachment_name,
+            received_datetime,
             next_action,
             action_reason,
             priority,
@@ -226,13 +309,11 @@ def fetch_current_worklist(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
 # ----------------------------
 # Debug helpers
 # ----------------------------
-
 def _debug_worklist_delta(conn: sqlite3.Connection, run_id: str, *, total_items: int) -> None:
     """
     Debug-only: compares this run against the previous run and prints action-change counts.
     Read-only. No mutations.
     """
-    # Find previous run_id (excluding current)
     prev = conn.execute(
         """
         SELECT run_id
@@ -289,7 +370,6 @@ def _debug_worklist_delta(conn: sqlite3.Connection, run_id: str, *, total_items:
 # ----------------------------
 # Classification rules (V1)
 # ----------------------------
-
 def _values_missing(row: sqlite3.Row) -> bool:
     """
     V1: allow 'gross-only' invoices (common for international vendors).

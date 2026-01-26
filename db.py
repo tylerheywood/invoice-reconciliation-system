@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import sqlite3
 from pathlib import Path
 
@@ -6,6 +8,10 @@ Creates tables
 enforces constraints
 holds connection helper
 AND performs lightweight schema migrations (SQLite-friendly).
+
+V1 additions:
+- invoice_worklist now carries AP-friendly identifiers for Outlook lookup:
+  sender_domain, email_subject, attachment_name, received_datetime
 """
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -22,27 +28,9 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
-def ensure_po_validation_column(conn: sqlite3.Connection) -> None:
-    """
-    Ensure inbox_invoice.po_validation_status exists.
-
-    Lightweight, idempotent schema guard. Uses the shared schema helpers
-    so all migrations follow one pattern.
-    """
-    # If the base table doesn't exist yet, nothing to do.
-    if not _table_exists(conn, "inbox_invoice"):
-        return
-
-    if not _column_exists(conn, "inbox_invoice", "po_validation_status"):
-        conn.execute(
-            """
-            ALTER TABLE inbox_invoice
-            ADD COLUMN po_validation_status TEXT NOT NULL DEFAULT 'UNVALIDATED'
-            """
-        )
-
-
-
+# -----------------------------------------------------------------------------
+# Schema helpers
+# -----------------------------------------------------------------------------
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ? LIMIT 1;",
@@ -56,6 +44,28 @@ def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
         return False
     rows = conn.execute(f"PRAGMA table_info({table});").fetchall()
     return any(r["name"] == column for r in rows)
+
+
+# -----------------------------------------------------------------------------
+# Migrations
+# -----------------------------------------------------------------------------
+def ensure_po_validation_column(conn: sqlite3.Connection) -> None:
+    """
+    Ensure inbox_invoice.po_validation_status exists.
+
+    Lightweight, idempotent schema guard. Uses the shared schema helpers
+    so all migrations follow one pattern.
+    """
+    if not _table_exists(conn, "inbox_invoice"):
+        return
+
+    if not _column_exists(conn, "inbox_invoice", "po_validation_status"):
+        conn.execute(
+            """
+            ALTER TABLE inbox_invoice
+            ADD COLUMN po_validation_status TEXT NOT NULL DEFAULT 'UNVALIDATED'
+            """
+        )
 
 
 def _migrate_add_ready_to_post(conn: sqlite3.Connection) -> None:
@@ -106,6 +116,41 @@ def _ensure_ready_index(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_add_worklist_identity_columns(conn: sqlite3.Connection) -> None:
+    """
+    Adds AP-friendly identifier columns to invoice_worklist and invoice_worklist_history.
+
+    These columns help an AP user locate the invoice in Outlook without access to staging:
+    - sender_domain
+    - email_subject
+    - attachment_name
+    - received_datetime
+
+    Safe to run repeatedly.
+    """
+    identity_cols = (
+        ("sender_domain", "TEXT"),
+        ("email_subject", "TEXT"),
+        ("attachment_name", "TEXT"),
+        ("received_datetime", "TEXT"),
+    )
+
+    # Current queue table
+    if _table_exists(conn, "invoice_worklist"):
+        for col, col_type in identity_cols:
+            if not _column_exists(conn, "invoice_worklist", col):
+                conn.execute(f"ALTER TABLE invoice_worklist ADD COLUMN {col} {col_type};")
+
+    # History table (keep the same shape so the snapshots remain interpretable)
+    if _table_exists(conn, "invoice_worklist_history"):
+        for col, col_type in identity_cols:
+            if not _column_exists(conn, "invoice_worklist_history", col):
+                conn.execute(f"ALTER TABLE invoice_worklist_history ADD COLUMN {col} {col_type};")
+
+
+# -----------------------------------------------------------------------------
+# Create schema
+# -----------------------------------------------------------------------------
 def initialise_database() -> None:
     conn = get_connection()
     cursor = conn.cursor()
@@ -229,7 +274,7 @@ def initialise_database() -> None:
                 ON UPDATE CASCADE
                 ON DELETE CASCADE
         );
-        
+
         -- =========================================================
         -- Worklist (derived queue cache + append-only history)
         -- =========================================================
@@ -237,6 +282,13 @@ def initialise_database() -> None:
         -- Current computed queue (one row per invoice)
         CREATE TABLE IF NOT EXISTS invoice_worklist (
             document_hash TEXT PRIMARY KEY,
+
+            -- AP-friendly identifiers for locating the invoice in Outlook
+            sender_domain TEXT,
+            email_subject TEXT,
+            attachment_name TEXT,
+            received_datetime TEXT,
+
             next_action TEXT NOT NULL,
             action_reason TEXT NOT NULL,
             priority INTEGER NOT NULL,
@@ -253,6 +305,13 @@ def initialise_database() -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             run_id TEXT NOT NULL,
             document_hash TEXT NOT NULL,
+
+            -- AP-friendly identifiers for locating the invoice in Outlook
+            sender_domain TEXT,
+            email_subject TEXT,
+            attachment_name TEXT,
+            received_datetime TEXT,
+
             next_action TEXT NOT NULL,
             action_reason TEXT NOT NULL,
             priority INTEGER NOT NULL,
@@ -263,7 +322,6 @@ def initialise_database() -> None:
                 ON UPDATE CASCADE
                 ON DELETE CASCADE
         );
-
 
         -- =========================================================
         -- Indexes (dashboard + worklist)
@@ -299,7 +357,7 @@ def initialise_database() -> None:
 
         CREATE INDEX IF NOT EXISTS idx_po_supplier
         ON po_master (supplier_account);
-        
+
         CREATE INDEX IF NOT EXISTS idx_worklist_action
         ON invoice_worklist (next_action, priority);
 
@@ -314,13 +372,13 @@ def initialise_database() -> None:
 
         CREATE UNIQUE INDEX IF NOT EXISTS uq_worklist_hist_run_doc
         ON invoice_worklist_history (run_id, document_hash);
-
         """
     )
 
     # Migrations (must run after base schema exists)
     ensure_po_validation_column(conn)
     _migrate_add_ready_to_post(conn)
+    _migrate_add_worklist_identity_columns(conn)
 
     # Dependent indexes (must run after migrations)
     _ensure_ready_index(conn)
@@ -334,6 +392,8 @@ def reset_database() -> None:
     cur = conn.cursor()
     cur.executescript(
         """
+        DROP TABLE IF EXISTS invoice_worklist_history;
+        DROP TABLE IF EXISTS invoice_worklist;
         DROP TABLE IF EXISTS invoice_resolution;
         DROP TABLE IF EXISTS invoice_po;
         DROP TABLE IF EXISTS inbox_invoice;

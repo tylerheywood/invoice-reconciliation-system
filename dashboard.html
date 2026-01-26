@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AP Inbox Control (QAHE)</title>
+  <style>
+:root {
+  --bg-main: #0b0f14;
+  --bg-panel: #111827;
+  --bg-card: #0f172a;
+  --bg-hover: #1f2937;
+  --border-subtle: #1f2937;
+
+  --text-main: #ffffff;
+  --text-muted: #9ca3af;
+  --text-soft: #cbd5f5;
+  --accent: #22c55e;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: linear-gradient(180deg, #0b0f14 0%, #0a0e13 100%);
+  color: var(--text-main);
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+
+body {
+  padding: 24px;
+}
+
+.topbar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.meta {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.tabs {
+  display: flex;
+  gap: 10px;
+  margin: 20px 0;
+  flex-wrap: wrap;
+}
+
+.tab {
+  padding: 10px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-soft);
+  background: transparent;
+}
+
+.tab:hover {
+  background: var(--bg-hover);
+}
+
+.tab.active {
+  background: var(--bg-panel);
+  color: var(--text-main);
+  border-color: var(--text-soft);
+}
+
+.panel { display: none; }
+.panel.active { display: block; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 1000px) {
+  .grid { grid-template-columns: repeat(2, minmax(220px, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .grid { grid-template-columns: 1fr; }
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  padding: 16px;
+}
+
+.kpi-title {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.kpi-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.kpi-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 8px;
+}
+
+.row { margin: 20px 0; }
+
+.muted {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.err { color: #f87171; }
+
+.pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--border-subtle);
+  background: #020617;
+  color: var(--text-soft);
+}
+
+/* Tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--bg-card);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+th, td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 13px;
+  vertical-align: top;
+}
+
+th {
+  text-align: left;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: #020617; }
+
+.small { font-size: 12px; }
+.wrap { white-space: normal; }
+.nowrap { white-space: nowrap; }
+.right { text-align: right; }
+
+.controls {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 10px 0 0 0;
+}
+
+.control {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  padding: 8px 10px;
+  border-radius: 12px;
+}
+
+select, input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+select {
+  background: #020617;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-main);
+  border-radius: 10px;
+  padding: 6px 10px;
+}
+  </style>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="title">AP Inbox Control (QAHE)</div>
+    <div class="meta" id="meta">Loading…</div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="overview">Overview</div>
+    <div class="tab" data-tab="exceptions">Exceptions</div>
+    <div class="tab" data-tab="ageing">Ageing</div>
+    <div class="tab" data-tab="worklist">Worklist</div>
+    <div class="tab" data-tab="trends">Trends</div>
+  </div>
+
+  <div id="error" class="row err" style="display:none;"></div>
+
+  <!-- Overview -->
+  <div class="panel active" id="overview">
+    <div class="grid">
+      <div class="card">
+        <div class="kpi-title">Total Estimated Exposure</div>
+        <div class="kpi-value" id="kpi_total">—</div>
+        <div class="kpi-sub" id="kpi_total_sub">—</div>
+      </div>
+      <div class="card">
+        <div class="kpi-title">Invoices awaiting manual review</div>
+        <div class="kpi-value" id="kpi_manual">—</div>
+        <div class="kpi-sub" id="kpi_manual_sub">—</div>
+      </div>
+      <div class="card">
+        <div class="kpi-title">Invoices ready to be posted</div>
+        <div class="kpi-value" id="kpi_ready">—</div>
+        <div class="kpi-sub" id="kpi_ready_sub">—</div>
+      </div>
+      <div class="card">
+        <div class="kpi-title">Signals</div>
+        <div class="kpi-sub" style="margin-top:0;">
+          <div>PO confidence: <span class="pill" id="sig_po">—</span></div>
+          <div style="margin-top:8px;">Biggest invoice: <span class="pill" id="sig_big">—</span></div>
+          <div style="margin-top:8px;">Oldest invoice: <span class="pill" id="sig_old">—</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row muted" id="overview_note"></div>
+  </div>
+
+  <!-- Exceptions -->
+  <div class="panel" id="exceptions">
+    <div class="grid">
+      <div class="card">
+        <div class="kpi-title">Unreadable (NO_TEXT_LAYER)</div>
+        <div class="kpi-value" id="exc_ocr">—</div>
+      </div>
+      <div class="card">
+        <div class="kpi-title">Manual review invoices</div>
+        <div class="kpi-value" id="exc_manual">—</div>
+      </div>
+      <div class="card">
+        <div class="kpi-title">Ready invoices</div>
+        <div class="kpi-value" id="exc_ready">—</div>
+      </div>
+      <div class="card">
+        <div class="kpi-title">Data source</div>
+        <div class="kpi-sub" id="exc_source">—</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <h3 style="margin:10px 0;">Status breakdown</h3>
+      <div class="muted">Counts are for invoices currently present. Values include only invoices where a gross total is available.</div>
+      <div style="margin-top:10px; overflow:auto;">
+        <table>
+          <thead>
+            <tr><th>Status</th><th>Count</th><th>Known total (£)</th></tr>
+          </thead>
+          <tbody id="exc_table"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ageing -->
+  <div class="panel" id="ageing">
+    <div class="row">
+      <h3 style="margin:10px 0;">Ageing buckets</h3>
+      <div class="muted">Age is calculated from first seen datetime. Values include only invoices where a gross total is available.</div>
+      <div style="margin-top:10px; overflow:auto;">
+        <table>
+          <thead>
+            <tr><th>Age bucket</th><th>Ready count</th><th>Ready £</th><th>Manual count</th><th>Manual £</th></tr>
+          </thead>
+          <tbody id="age_table"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Worklist -->
+  <div class="panel" id="worklist">
+    <div class="row">
+      <h3 style="margin:10px 0;">Worklist</h3>
+      <div class="muted">Operational queue of items needing manual action. Sorted by priority (high → low).</div>
+
+      <div class="controls">
+        <div class="control">
+          <label for="wl_present_only" class="small">Present only</label>
+          <input id="wl_present_only" type="checkbox" checked />
+        </div>
+
+        <div class="control">
+          <label for="wl_min_priority" class="small">Min priority</label>
+          <select id="wl_min_priority">
+            <option value="0">0+</option>
+            <option value="1">1+</option>
+            <option value="5">5+</option>
+            <option value="10">10+</option>
+            <option value="20">20+</option>
+          </select>
+        </div>
+
+        <div class="muted small" id="wl_count">—</div>
+      </div>
+
+      <div style="margin-top:10px; overflow:auto;">
+        <table>
+          <thead id="wl_head"></thead>
+          <tbody id="wl_body"></tbody>
+        </table>
+      </div>
+
+      <div id="wl_empty" class="muted" style="display:none; margin-top:10px;">No work items matching filters 🎉</div>
+    </div>
+  </div>
+
+  <!-- Trends -->
+  <div class="panel" id="trends">
+    <div class="row">
+      <h3 style="margin:10px 0;">Trends (Daily snapshots)</h3>
+      <div class="muted" id="trends_note">Snapshotting not enabled yet.</div>
+      <div style="margin-top:10px; overflow:auto; display:none;" id="trends_wrap">
+        <table>
+          <thead id="trends_head"></thead>
+          <tbody id="trends_body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+<script>
+  function gbp(pence) {
+    if (pence === null || pence === undefined) return "—";
+    const v = (Number(pence) || 0) / 100.0;
+    return "£" + v.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+  }
+  function pct(x) { return (x === null || x === undefined) ? "—" : (Number(x).toFixed(1) + "%"); }
+  function days(x) { return (x === null || x === undefined) ? "—" : (parseInt(x,10) + " days"); }
+  function setText(id, text) { document.getElementById(id).textContent = text; }
+
+  function fmtIso(dt) {
+    if (!dt) return "—";
+    return String(dt).replace("T"," ").replace("+00:00","").replace("Z","");
+  }
+
+  function shortHash(h) {
+    if (!h) return "—";
+    return String(h).slice(0, 10);
+  }
+
+  // ---- Worklist rendering ----
+  function renderWorklist(data) {
+    const presentOnly = document.getElementById("wl_present_only").checked;
+    const minPriority = parseInt(document.getElementById("wl_min_priority").value, 10) || 0;
+
+    const raw = data.worklist || [];
+    let rows = raw.slice();
+
+    rows = rows.filter(r => {
+      const p = Number(r.priority ?? 0);
+      const present = Number(r.is_currently_present ?? 0) === 1;
+      if (presentOnly && !present) return false;
+      if (p < minPriority) return false;
+      return true;
+    });
+
+    // Sort: priority DESC, then generated_at DESC
+    rows.sort((a,b) => {
+      const pa = Number(a.priority ?? 0), pb = Number(b.priority ?? 0);
+      if (pb !== pa) return pb - pa;
+      const ta = Date.parse(a.generated_at_utc || "") || 0;
+      const tb = Date.parse(b.generated_at_utc || "") || 0;
+      return tb - ta;
+    });
+
+    const head = document.getElementById("wl_head");
+    const body = document.getElementById("wl_body");
+    const empty = document.getElementById("wl_empty");
+    const count = document.getElementById("wl_count");
+
+    body.innerHTML = "";
+
+    const cols = [
+      { key: "priority", label: "Priority", cls: "right nowrap" },
+      { key: "next_action", label: "Next action", cls: "wrap" },
+      { key: "action_reason", label: "Reason", cls: "wrap" },
+      { key: "generated_at_utc", label: "Generated", cls: "nowrap" },
+      { key: "is_currently_present", label: "Present", cls: "nowrap" },
+      { key: "document_hash", label: "Doc hash", cls: "nowrap" }
+    ];
+
+    head.innerHTML = "<tr>" + cols.map(c => `<th>${c.label}</th>`).join("") + "</tr>";
+
+    count.textContent = `${rows.length} item(s)`;
+
+    if (rows.length === 0) {
+      empty.style.display = "block";
+      return;
+    }
+    empty.style.display = "none";
+
+    rows.forEach(r => {
+      const tr = document.createElement("tr");
+      const present = Number(r.is_currently_present ?? 0) === 1 ? "Yes" : "No";
+      const hash = r.document_hash ?? "";
+
+      tr.innerHTML = cols.map(c => {
+        let v = r[c.key];
+
+        if (c.key === "generated_at_utc") v = fmtIso(v);
+        if (c.key === "is_currently_present") v = present;
+        if (c.key === "document_hash") {
+          const sh = shortHash(hash);
+          v = `<span title="${String(hash).replaceAll('"','&quot;')}">${sh}</span>`;
+        }
+
+        return `<td class="${c.cls}">${(v === null || v === undefined || v === "") ? "—" : v}</td>`;
+      }).join("");
+
+      body.appendChild(tr);
+    });
+  }
+
+  async function loadSnapshot() {
+    try {
+      const res = await fetch("/snapshot.json", { cache: "no-store" });
+      if (!res.ok) throw new Error("Failed to load snapshot.json (" + res.status + ")");
+      const data = await res.json();
+      if (data._error) throw new Error(data._error);
+
+      // Meta
+      const lastScan = data.overview?.last_scan || "—";
+      const genAt = data.generated_at || "—";
+      setText("meta", `Most Recent Scan: ${fmtIso(lastScan)} · Generated: ${fmtIso(genAt)}`);
+
+      // Overview KPIs
+      const m = data.overview;
+      setText("kpi_total", gbp(m.total_estimated_exposure_pence));
+      setText("kpi_total_sub", `${m.total_present} invoices · Coverage ${pct(m.value_coverage_pct)}`);
+
+      setText("kpi_manual", gbp(m.manual_total_estimated_exposure_pence));
+      setText("kpi_manual_sub", `${m.manual_count} invoices · Known ${gbp(m.manual_known_exposure_pence)} · Est ${gbp(m.manual_estimated_missing_exposure_pence)}`);
+
+      setText("kpi_ready", gbp(m.ready_exposure_pence));
+      setText("kpi_ready_sub", `${m.ready_count} invoices · Known only`);
+
+      setText("sig_po", pct(m.po_confidence));
+      setText("sig_big", gbp(m.biggest_invoice_pence));
+      setText("sig_old", days(m.oldest_days));
+
+      const note = `Disclosure: Exposure values may include a median-based estimate where invoices are missing extracted £ totals. Median used: ${gbp(m.median_gross_pence)}.`;
+      setText("overview_note", note);
+
+      // Exceptions
+      setText("exc_ocr", (m.ocr_needed_count === null || m.ocr_needed_count === undefined) ? "—" : String(m.ocr_needed_count));
+      setText("exc_manual", String(m.manual_count));
+      setText("exc_ready", String(m.ready_count));
+      setText("exc_source", `Readiness rule: ${m.readiness_source}`);
+
+      const tbody = document.getElementById("exc_table");
+      tbody.innerHTML = "";
+      (data.status_breakdown || []).forEach(r => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${r.status ?? "—"}</td><td>${r.cnt ?? 0}</td><td>${gbp(r.gross_pence)}</td>`;
+        tbody.appendChild(tr);
+      });
+
+      // Ageing
+      const ageTbody = document.getElementById("age_table");
+      ageTbody.innerHTML = "";
+      const buckets = (data.ageing_buckets || []);
+      const order = ["0-1 days","2-3 days","4-7 days","8-14 days","15+ days"];
+      const map = {};
+      buckets.forEach(r => {
+        map[r.age_bucket] = map[r.age_bucket] || {};
+        map[r.age_bucket][r.lane] = r;
+      });
+      order.forEach(b => {
+        const ready = (map[b] && map[b]["Ready"]) || {cnt:0, gross_pence:0};
+        const manual = (map[b] && map[b]["Manual"]) || {cnt:0, gross_pence:0};
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${b}</td><td>${ready.cnt ?? 0}</td><td>${gbp(ready.gross_pence)}</td><td>${manual.cnt ?? 0}</td><td>${gbp(manual.gross_pence)}</td>`;
+        ageTbody.appendChild(tr);
+      });
+
+      // Worklist
+      renderWorklist(data);
+
+      // Trends (optional)
+      const trends = data.trends || [];
+      if (trends.length > 0) {
+        document.getElementById("trends_wrap").style.display = "block";
+        document.getElementById("trends_note").textContent = "Showing most recent snapshots (latest first).";
+
+        const cols = Object.keys(trends[0]);
+        document.getElementById("trends_head").innerHTML =
+          "<tr>" + cols.map(c => `<th>${c}</th>`).join("") + "</tr>";
+
+        const body = document.getElementById("trends_body");
+        body.innerHTML = "";
+        trends.forEach(row => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = cols.map(c => `<td>${row[c] ?? "—"}</td>`).join("");
+          body.appendChild(tr);
+        });
+      }
+
+    } catch (e) {
+      const el = document.getElementById("error");
+      el.style.display = "block";
+      el.textContent = "Error: " + e.message;
+    }
+  }
+
+  // Tabs
+  document.querySelectorAll(".tab").forEach(t => {
+    t.addEventListener("click", () => {
+      document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+      document.querySelectorAll(".panel").forEach(x => x.classList.remove("active"));
+      t.classList.add("active");
+      document.getElementById(t.dataset.tab).classList.add("active");
+    });
+  });
+
+  // Worklist filters rerender (no refetch)
+  document.getElementById("wl_present_only").addEventListener("change", loadSnapshot);
+  document.getElementById("wl_min_priority").addEventListener("change", loadSnapshot);
+
+  loadSnapshot();
+</script>
+</body>
+</html>

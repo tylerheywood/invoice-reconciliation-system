@@ -5,8 +5,6 @@ import os
 from pathlib import Path
 '''
 Remaining task list before V1 sign-off:
-- Multi-folder scanning implementation 
-- Dashboard exposure strategy (VPS / web)
 - Worklist output
 - Scanner abstraction cleanup (potentially v1.1)
 '''
@@ -110,10 +108,9 @@ def main() -> None:
         remote_dir=os.getenv("ICS_VPS_REMOTE_DIR", "/var/www/ics-data"),
     )
     if publish_cfg.enabled and publish_cfg.vps_host:
-        run_publish(publish_cfg, log=dprint)
-        print(f"Snapshot pushed to dashboard.")
+        run_publish(publish_cfg, log=print)  # <-- key fix: don't hide errors
     else:
-        print("Failed pushing to dashboard.")
+        print("[PUBLISH] Skipped (disabled or missing host)")
 
 
 if __name__ == "__main__":

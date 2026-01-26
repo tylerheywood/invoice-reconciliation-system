@@ -1,4 +1,3 @@
-# dashboard_data.py
 from __future__ import annotations
 
 import sqlite3
@@ -389,6 +388,62 @@ def load_ageing_buckets_data(db_path: Path) -> list[dict[str, Any]]:
             """,
             rule.ready_params,
         )
+        return [dict(r) for r in rows]
+
+
+def load_worklist_data(db_path: Path) -> list[dict[str, Any]]:
+    """
+    Reads the operational worklist from SQLite and returns rows suitable
+    for snapshot.json.
+
+    Includes Outlook identifiers so the dashboard can show "how to find this email".
+    """
+    with get_connection(db_path) as conn:
+        if not table_exists(conn, "invoice_worklist"):
+            return []
+
+        cols = get_table_columns(conn, "invoice_worklist")
+
+        # Backwards compatible: if identity columns don't exist yet, return what we can.
+        has_identity = all(
+            c in cols for c in ("sender_domain", "email_subject", "attachment_name", "received_datetime")
+        )
+
+        if has_identity:
+            rows = fetch_rows(
+                conn,
+                """
+                SELECT
+                  document_hash,
+                  sender_domain,
+                  email_subject,
+                  attachment_name,
+                  received_datetime,
+                  next_action,
+                  action_reason,
+                  priority,
+                  generated_at_utc,
+                  is_currently_present
+                FROM invoice_worklist
+                ORDER BY priority ASC, document_hash ASC
+                """,
+            )
+        else:
+            rows = fetch_rows(
+                conn,
+                """
+                SELECT
+                  document_hash,
+                  next_action,
+                  action_reason,
+                  priority,
+                  generated_at_utc,
+                  is_currently_present
+                FROM invoice_worklist
+                ORDER BY priority ASC, document_hash ASC
+                """,
+            )
+
         return [dict(r) for r in rows]
 
 

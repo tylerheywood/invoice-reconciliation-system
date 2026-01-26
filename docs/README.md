@@ -111,11 +111,18 @@ Every outcome is explainable.
   - **[8.0 Worklist (Job Queue)](#80-worklist-job-queue)**
     - [8.1 Design Principles](#81-design-principles)
     - [8.2 Worklist Actions (V1)](#82-worklist-actions-v1)
-    - [8.3 Value Expectations (V1)](#83-value-expectations-v1)
-    - [8.4 Live Validation Behaviour](#84-live-validation-behaviour)
+    - [8.3 Classification Model (V1)](#83-classification-model-v1)
+    - [8.4 Value Expectations (V1)](#84-value-expectations-v1)
     - [8.5 Persistence Model](#85-persistence-model)
+    - [8.6 Invoice Identification (V1)](#86-invoice-identification-v1)
+    - [8.7 Live Behaviour](#87-live-behaviour)
   - **[9.0 Dashboard (Clarification)](#90-dashboard-clarification)**
+    - [9.1 Architecture](#91-architecture)
+    - [9.2 Scope and Constraints](#92-scope-and-constraints)
+    - [9.3 Data Source](#93-data-source)
+    - [9.4 Operational Intent](#94-operational-intent)
   - **[10.0 System Pipeline (Updated Order)](#100-system-pipeline-updated-order)**
+
 
 - **Author Information**
   - **[11.0 Author](#110-author)**
@@ -157,7 +164,7 @@ Every outcome is explainable.
    - PO numbers (regex-based)
    - Invoice values (net / VAT / gross where available)
 6. Validate detected POs against `po_master`
-7. Surface metrics and status via a local Streamlit dashboard
+7. Surface metrics and status via a HTML dashboard
 
 ---
 
@@ -324,94 +331,214 @@ No estimation or inference is performed at the extraction or worklist layer.
 
 ---
 
-- Produces a **deterministic, actionable worklist** for Accounts Payable
-- Translates pipeline truth into **exactly one next action per invoice**
-- Designed for **human clarity**, not automation
-- The worklist is a **derived view**, not a source of truth
+The worklist is a **deterministic, derived job queue** for Accounts Payable.
 
-The worklist answers one question only:
+It translates persisted invoice truth into **exactly one actionable next step per invoice**.
 
-> *“What is the single next thing a human needs to do with this invoice?”*
+The worklist does not introduce new state, approvals, or workflow logic.  
+It is a **computed view** over existing invoice data.
 
 ---
 
 ### 8.1 Design Principles
 
+The worklist is designed around the following principles:
+
 - **Computed, not guessed**
   - No heuristic scoring
-  - No hidden workflow state
+  - No probabilistic decisions
   - Actions are derived directly from persisted invoice truth
 
 - **One action per invoice**
   - Uses precedence-based rules (“first blocker wins”)
-  - Avoids duplicate or competing tasks
+  - Avoids competing or duplicated tasks
 
 - **AP-native semantics**
-  - Actions reflect real AP work (e.g. *Request PO*, *Check PO Status*)
-  - No generic workflow abstractions
+  - Actions reflect real AP work (e.g. *Manual Review*, *Ready to Post*)
+  - No abstract workflow states
 
 - **Auditability over convenience**
-  - Every action is explainable via stored invoice state
-  - Historical worklist snapshots are retained
+  - Every action is explainable
+  - Historical snapshots are retained for comparison and analysis
 
 ---
 
 ### 8.2 Worklist Actions (V1)
 
-Each invoice is mapped to one of the following actions:
+Each invoice is mapped to **one** of the following actions:
 
 - `READY TO POST`
 - `MANUAL REVIEW`
 
-Each row also includes an **action reason**, explaining *why* the action was assigned
-(e.g. `PO NOT OPEN`, `GROSS TOTAL NOT EXTRACTED`, `NO TEXT LAYER`).
+Each row also includes an **action reason** explaining *why* the action was assigned  
+(e.g. `PO NOT OPEN`, `MISSING PO`, `NO TEXT LAYER`, `GROSS TOTAL NOT EXTRACTED`).
+
+The action reason is descriptive only and does not introduce additional workflow state.
 
 ---
 
-### 8.3 Value Expectations (V1)
+### 8.3 Classification Model 
 
-- Invoices are considered value-complete if **`gross_total` is present**
-- **Gross-only invoices are valid** and supported (common for international suppliers)
-- `net_total` and `vat_total` may be NULL and are not required in V1
-- No value estimation or inference is performed at the worklist level
+Worklist classification is **precedence-based**.
+
+Rules are evaluated in a fixed order.  
+The **first blocking condition wins** and determines the next action.
+
+Examples of blocking conditions include:
+- invoice not currently present in the inbox
+- missing or unreadable text layer
+- missing or invalid PO
+- PO exists but is not open
+- required value (gross total) not extracted
+
+This model ensures consistent outcomes across re-runs and prevents rule conflicts.
 
 ---
 
-### 8.4 Live Validation Behaviour
+### 8.4 Value Expectations 
 
-- The worklist reflects the **current operational truth**
-- PO validation is re-evaluated for all in-flight invoices on each run
-- If a PO’s status changes in the master data:
-  - the invoice’s validation status updates
-  - the worklist action updates accordingly
-- Invoices marked as posted (`posted_datetime IS NOT NULL`) are treated as terminal
+Invoices are considered value-complete if **`gross_total` is present**.
+
+- Gross-only invoices are valid and supported
+- `net_total` and `vat_total` may be NULL without blocking progression
+- No estimation or inference is performed at the worklist level
+
+Invoices missing a gross total are routed to `MANUAL REVIEW` with an explicit reason.
 
 ---
 
 ### 8.5 Persistence Model
 
+The worklist uses two tables:
+
 - `invoice_worklist`
-  - Current, full-replace cache of actionable work
-  - Represents the *latest* view of what needs attention
+  - Current, full-replace cache
+  - Represents the latest actionable view
 
 - `invoice_worklist_history`
-  - Append-only snapshots of each run
+  - Append-only snapshots per pipeline run
   - Provides a complete audit trail of:
     - action changes
-    - regressions (e.g. READY → BLOCKED)
-    - operational trends over time
+    - regressions (e.g. READY → MANUAL)
+    - operational trends
 
-No manual removal or dismissal is supported in V1.
-Items leave the worklist only when underlying truth changes.
+Items leave the worklist only when underlying invoice truth changes.
 
+---
 
+### 8.6 Invoice Identification
 
+Each worklist row includes **human-identifiable context** so AP users can locate the
+invoice in Outlook without access to internal staging folders.
+
+Included identifiers:
+- Sender domain 
+- Email subject
+- Attachment filename
+- Received datetime
+
+These fields are **descriptive only**.
+
+They do not participate in:
+- classification logic
+- prioritisation
+- readiness decisions
+
+This separation preserves determinism while making the worklist operationally usable.
+
+---
+
+### 8.7 Live Behaviour
+
+The worklist reflects **current operational truth**.
+
+- Recomputed on every pipeline run
+- PO validation is re-evaluated against the latest master data
+- Invoices may move between actions as upstream truth changes
+- Posted or no-longer-present invoices naturally fall out of scope
+
+No manual dismissal or override is supported in V1.
 
 ---
 
 ## 9.0 Dashboard (Clarification)
 
-The Streamlit dashboard is **read-only** and consumes database truth.
+---
+
+The dashboard is a **read-only operational view** of the system.
+
+It does not perform validation, classification, estimation, or decision-making.
+
+All business logic runs **inside the pipeline** and persists truth to SQLite.  
+The dashboard simply **renders a published snapshot** of that truth.
+
+---
+
+### 9.1 Architecture
+
+- The pipeline generates a deterministic `snapshot.json` file at the end of each run
+- The snapshot is published to a web server
+- A static HTML dashboard fetches and renders the snapshot
+- No backend logic exists in the dashboard layer
+
+This design enforces a strict separation between:
+
+- **Computation** (pipeline)
+- **Presentation** (dashboard)
+
+The dashboard can be refreshed, cached, or redeployed freely without affecting system behaviour.
+
+---
+
+### 9.2 Scope and Constraints
+
+The dashboard is intentionally constrained:
+
+- **Read-only**
+- **No write access** to SQLite or source systems
+- **No workflow state**
+- **No side effects**
+
+It cannot:
+- modify invoice state
+- override worklist actions
+- trigger postings or automation
+
+This ensures the dashboard remains **safe, explainable, and auditable**.
+
+---
+
+### 9.3 Data Source
+
+The dashboard consumes a single input:
+
+- `snapshot.json`
+
+The snapshot includes:
+- overview metrics
+- status breakdowns
+- ageing buckets
+- worklist rows
+- (optional) historical trends
+
+If the snapshot is unavailable or invalid, the dashboard displays an error and **takes no action**.
+
+---
+
+### 9.4 Operational Intent
+
+The dashboard exists to answer three questions only:
+
+1. What invoices are currently in the inbox?
+2. Which invoices are ready vs blocked?
+3. What human action is required next — and why?
+
+It is designed to support:
+- AP operational review
+- manager visibility
+- exception-driven prioritisation
+
+It is **not** a workflow engine, approval system, or automation surface.
 
 ---
 

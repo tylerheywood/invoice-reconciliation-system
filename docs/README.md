@@ -231,6 +231,7 @@ Validation is a **separate pipeline stage**, run only after detection:
 - `PO_NOT_IN_MASTER`
 - `PO_NOT_OPEN`
 - `VALID_PO`
+- `PO_NOT_CONFIRMED`
 
 ### 4.5 Ready-to-Post Flag
 - `ready_to_post` is a **canonical truth column**
@@ -238,6 +239,7 @@ Validation is a **separate pipeline stage**, run only after detection:
   - exactly one PO is detected **and**
   - the PO exists in `po_master` **and**
   - the PO is in an open status
+  - the PO approval status is `confirmed`
 - Dashboards and worklists rely on this flag directly
 
 ---
@@ -294,6 +296,7 @@ No new pipeline stages or state are introduced here.
 - Validation results always reflect the **latest `po_master` snapshot**
 - An invoice previously marked as `VALID_PO` may regress to a blocked state
   if the PO becomes closed or invoiced
+- Both PO lifecycle status and approval status are checked
 - Invoices with `posted_datetime IS NOT NULL` are treated as **terminal**
   and excluded from re-validation
 
@@ -309,6 +312,7 @@ persisting stale approval state.
   - exactly one PO has been detected
   - the PO exists in `po_master`
   - the PO is currently open
+  - the PO is approved
 - The flag may flip **on or off** across runs as upstream truth changes
 - Dashboards and worklists rely on this flag directly and do not infer readiness
 

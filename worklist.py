@@ -40,13 +40,14 @@ from po_validation import (
     STATUS_PO_NOT_OPEN,
     STATUS_VALID_PO,
     STATUS_SINGLE_PO_DETECTED,
+    STATUS_PO_NOT_CONFIRMED,
 )
 
 # Debug toggle (matches your project pattern)
 _ENV_DEBUG = os.getenv("ICS_DEBUG", "").strip().lower()
 DEBUG = _ENV_DEBUG in ("1", "true", "yes", "y", "on")
 
-# If you later add constants in po_detection.py, import them here and stop using raw strings.
+# If add constants in po_detection.py, import them here and stop using raw strings.
 STATUS_NO_TEXT_LAYER = "NO_TEXT_LAYER"
 STATUS_MISSING_PO = "MISSING_PO"
 STATUS_MULTIPLE_POS = "MULTIPLE_POS"
@@ -422,6 +423,8 @@ def _classify_invoice(row: sqlite3.Row) -> Tuple[str, str, int]:
             return ("MANUAL REVIEW", "PO NOT OPEN", 20)
         if po_validation_status == STATUS_UNVALIDATED:
             return ("MANUAL REVIEW", "PO NOT VALIDATED YET", 60)
+        if po_validation_status == STATUS_PO_NOT_CONFIRMED:
+            return ("MANUAL REVIEW", "PO NOT CONFIRMED", 20)
 
         # Defensive: unknown status written somewhere
         if po_validation_status not in (

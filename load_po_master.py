@@ -24,6 +24,7 @@ def load_po_master(csv_path: Path) -> dict:
         po_col = field_map.get("purchase order")
         supplier_col = field_map.get("supplier account")
         status_col = field_map.get("purchase order status")
+        approval_col = field_map.get("approval status")
 
         if not po_col or not supplier_col:
             raise ValueError(f"Unexpected CSV columns: {reader.fieldnames}")
@@ -32,6 +33,7 @@ def load_po_master(csv_path: Path) -> dict:
             po_number = row[po_col].strip()
             supplier_account = row[supplier_col].strip()
             po_status = row[status_col].strip() if status_col else None
+            approval_status = row[approval_col].strip() if approval_col else None
 
             if not po_number or not supplier_account:
                 continue
@@ -42,10 +44,13 @@ def load_po_master(csv_path: Path) -> dict:
                     po_number,
                     supplier_account,
                     po_status,
+                    approval_status,
                     last_import_datetime
-                ) VALUES (?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?)
+
                 """,
-                (po_number, supplier_account, po_status, now),
+                (po_number, supplier_account, po_status, approval_status, now)
+,
             )
 
             inserted += cur.rowcount

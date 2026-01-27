@@ -1,9 +1,10 @@
 from db import get_connection
 
 VALID_OPEN_STATUS = "Open order"
+VALID_APPROVAL_STATUS = "Confirmed"
 
+STATUS_PO_NOT_CONFIRMED = "PO_NOT_CONFIRMED"
 STATUS_SINGLE_PO_DETECTED = "SINGLE_PO_DETECTED"
-
 STATUS_UNVALIDATED = "UNVALIDATED"
 STATUS_PO_NOT_IN_MASTER = "PO_NOT_IN_MASTER"
 STATUS_PO_NOT_OPEN = "PO_NOT_OPEN"
@@ -64,7 +65,8 @@ def run_po_validation() -> dict:
         SELECT
             ii.document_hash,
             ip.po_number,
-            pm.po_status
+            pm.po_status,
+            pm.approval_status
         FROM inbox_invoice ii
         JOIN invoice_po ip
             ON ii.document_hash = ip.document_hash
@@ -84,6 +86,7 @@ def run_po_validation() -> dict:
     for row in rows:
         document_hash = row["document_hash"]
         po_status = row["po_status"]
+        approval_status = row["approval_status"]
 
         if po_status is None:
             new_validation_status = STATUS_PO_NOT_IN_MASTER
@@ -94,6 +97,11 @@ def run_po_validation() -> dict:
             new_validation_status = STATUS_PO_NOT_OPEN
             ready_to_post = 0
             not_open += 1
+
+        elif approval_status != VALID_APPROVAL_STATUS:
+            new_validation_status = STATUS_PO_NOT_CONFIRMED
+            ready_to_post = 0
+            not_open += 1  # optional: or add a new counter
 
         else:
             new_validation_status = STATUS_VALID_PO

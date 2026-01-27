@@ -115,6 +115,16 @@ def _ensure_ready_index(conn: sqlite3.Connection) -> None:
             """
         )
 
+def ensure_po_master_approval_column(conn: sqlite3.Connection) -> None:
+    """
+    Ensure po_master.approval_status exists.
+    Safe, idempotent schema guard for existing DBs.
+    """
+    if not _table_exists(conn, "po_master"):
+        return
+
+    if not _column_exists(conn, "po_master", "approval_status"):
+        conn.execute("ALTER TABLE po_master ADD COLUMN approval_status TEXT;")
 
 def _migrate_add_worklist_identity_columns(conn: sqlite3.Connection) -> None:
     """
@@ -245,8 +255,10 @@ def initialise_database() -> None:
             po_number TEXT PRIMARY KEY,
             supplier_account TEXT NOT NULL,
             po_status TEXT,
+            approval_status TEXT,
             last_import_datetime TEXT NOT NULL
         );
+
 
         -- =========================================================
         -- Supplier master snapshot (Dynamics)
@@ -376,6 +388,7 @@ def initialise_database() -> None:
     )
 
     # Migrations (must run after base schema exists)
+    ensure_po_master_approval_column(conn)
     ensure_po_validation_column(conn)
     _migrate_add_ready_to_post(conn)
     _migrate_add_worklist_identity_columns(conn)

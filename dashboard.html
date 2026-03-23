@@ -625,12 +625,10 @@ select {
       priority: "Priority",
       next_action: "Next action",
       action_reason: "Reason",
-      sender_domain: "Sender domain",
-      email_subject: "Email subject",
-      attachment_name: "Attachment",
+      attachment_name: "Filename",
       generated_at_utc: "Generated",
       is_currently_present: "Present",
-      document_hash: "Doc hash"
+      document_hash: "Reference"
     };
     return map[key] || key;
   }
@@ -712,9 +710,7 @@ select {
       { key: "priority", label: "Priority", cls: "right nowrap", sortable: true },
       { key: "next_action", label: "Next action", cls: "wrap", sortable: true },
       { key: "action_reason", label: "Reason", cls: "wrap", sortable: true },
-      { key: "sender_domain", label: "Sender domain", cls: "nowrap", sortable: true },
-      { key: "email_subject", label: "Email subject", cls: "wrap", sortable: true },
-      { key: "attachment_name", label: "Attachment", cls: "nowrap", sortable: true },
+      { key: "attachment_name", label: "Filename", cls: "nowrap", sortable: true },
       { key: "generated_at_utc", label: "Generated", cls: "nowrap", sortable: true },
       { key: "is_currently_present", label: "Present", cls: "nowrap", sortable: true },
       { key: "document_hash", label: "Doc hash", cls: "nowrap", sortable: true }

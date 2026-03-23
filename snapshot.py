@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -45,8 +47,19 @@ def write_snapshot(
 ) -> Path:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     data = build_snapshot(db_path, **kwargs)
-    out_path.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    content = json.dumps(data, ensure_ascii=False, indent=2)
+
+    # Write to temp file then atomically replace to prevent partial snapshots
+    fd, tmp_path = tempfile.mkstemp(
+        dir=str(out_path.parent), suffix=".tmp"
     )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp_path, str(out_path))
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
+
     return out_path

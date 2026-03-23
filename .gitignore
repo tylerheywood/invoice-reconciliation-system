@@ -12,7 +12,10 @@ __pycache__/
 *.db
 *.db-journal
 staging/
+input/
+data/
 logs/
 exports/
+.venv/
 run_main.local.ps1
 task_main.log

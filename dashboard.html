@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AP Inbox Control (QAHE)</title>
+  <title>AP Invoice Reconciliation System</title>
   <style>
 :root {
   --bg-main: #0b0f14;
@@ -282,7 +282,7 @@ select {
 
 <body>
   <div class="topbar">
-    <div class="title">AP Inbox Control (QAHE)</div>
+    <div class="title">AP Invoice Reconciliation System</div>
     <div class="meta" id="meta">Loading…</div>
   </div>
 
@@ -607,18 +607,25 @@ select {
       const present = Number(r.is_currently_present ?? 0) === 1 ? "Yes" : "No";
       const hash = r.document_hash ?? "";
 
-      tr.innerHTML = cols.map(c => {
+      cols.forEach(c => {
+        const td = document.createElement("td");
+        td.className = c.cls;
         let v = r[c.key];
 
         if (c.key === "generated_at_utc") v = fmtIso(v);
         if (c.key === "is_currently_present") v = present;
         if (c.key === "document_hash") {
-          const sh = shortHash(hash);
-          v = `<span title="${String(hash).replaceAll('"','&quot;')}">${sh}</span>`;
+          const span = document.createElement("span");
+          span.title = String(hash);
+          span.textContent = shortHash(hash);
+          td.appendChild(span);
+          tr.appendChild(td);
+          return;
         }
 
-        return `<td class="${c.cls}">${(v === null || v === undefined || v === "") ? "—" : v}</td>`;
-      }).join("");
+        td.textContent = (v === null || v === undefined || v === "") ? "—" : String(v);
+        tr.appendChild(td);
+      });
 
       body.appendChild(tr);
     });
@@ -664,7 +671,15 @@ select {
       tbody.innerHTML = "";
       (data.status_breakdown || []).forEach(r => {
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td>${r.status ?? "—"}</td><td>${r.cnt ?? 0}</td><td>${gbp(r.gross_pence)}</td>`;
+        const tdStatus = document.createElement("td");
+        tdStatus.textContent = r.status ?? "—";
+        const tdCnt = document.createElement("td");
+        tdCnt.textContent = r.cnt ?? 0;
+        const tdGross = document.createElement("td");
+        tdGross.textContent = gbp(r.gross_pence);
+        tr.appendChild(tdStatus);
+        tr.appendChild(tdCnt);
+        tr.appendChild(tdGross);
         tbody.appendChild(tr);
       });
 
@@ -682,7 +697,11 @@ select {
         const ready = (map[b] && map[b]["Ready"]) || {cnt:0, gross_pence:0};
         const manual = (map[b] && map[b]["Manual"]) || {cnt:0, gross_pence:0};
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td>${b}</td><td>${ready.cnt ?? 0}</td><td>${gbp(ready.gross_pence)}</td><td>${manual.cnt ?? 0}</td><td>${gbp(manual.gross_pence)}</td>`;
+        [b, ready.cnt ?? 0, gbp(ready.gross_pence), manual.cnt ?? 0, gbp(manual.gross_pence)].forEach(val => {
+          const td = document.createElement("td");
+          td.textContent = val;
+          tr.appendChild(td);
+        });
         ageTbody.appendChild(tr);
       });
 
@@ -696,14 +715,25 @@ select {
         document.getElementById("trends_note").textContent = "Showing most recent snapshots (latest first).";
 
         const cols = Object.keys(trends[0]);
-        document.getElementById("trends_head").innerHTML =
-          "<tr>" + cols.map(c => `<th>${c}</th>`).join("") + "</tr>";
+        const headTr = document.createElement("tr");
+        cols.forEach(c => {
+          const th = document.createElement("th");
+          th.textContent = c;
+          headTr.appendChild(th);
+        });
+        const trendsHead = document.getElementById("trends_head");
+        trendsHead.innerHTML = "";
+        trendsHead.appendChild(headTr);
 
         const body = document.getElementById("trends_body");
         body.innerHTML = "";
         trends.forEach(row => {
           const tr = document.createElement("tr");
-          tr.innerHTML = cols.map(c => `<td>${row[c] ?? "—"}</td>`).join("");
+          cols.forEach(c => {
+            const td = document.createElement("td");
+            td.textContent = row[c] ?? "—";
+            tr.appendChild(td);
+          });
           body.appendChild(tr);
         });
       }

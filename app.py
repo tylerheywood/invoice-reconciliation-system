@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file, send_from_directory
@@ -14,6 +16,7 @@ SNAPSHOT_PATH = EXPORTS_DIR / "snapshot.json"
 ALLOWED_EXTENSIONS = {".csv", ".xlsx"}
 
 app = Flask(__name__, static_folder=None)
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB upload cap
 
 
 @app.route("/")
@@ -39,20 +42,32 @@ def upload_po():
     if not f.filename:
         return jsonify({"ok": False, "error": "No file selected"}), 400
 
-    ext = Path(f.filename).suffix.lower()
+    ext = Path(f.filename).name  # strip directory components
+    ext = Path(ext).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         return jsonify({"ok": False, "error": f"Unsupported file type: {ext}. Use .csv or .xlsx"}), 400
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    save_path = DATA_DIR / f"po_upload{ext}"
-    f.save(str(save_path))
+    final_path = DATA_DIR / f"po_upload{ext}"
+
+    # Write to a temp file then atomically rename to avoid partial-file races
+    fd, tmp_path = tempfile.mkstemp(dir=str(DATA_DIR), suffix=ext)
+    try:
+        os.close(fd)
+        f.save(tmp_path)
+        os.replace(tmp_path, str(final_path))
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
 
     try:
-        result = load_po_master(save_path)
+        result = load_po_master(final_path)
         write_snapshot()
         return jsonify({"ok": True, "po_loaded": result["po_loaded"]})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    except Exception:
+        app.logger.exception("PO master load failed")
+        return jsonify({"ok": False, "error": "Failed to process PO file. Check the server logs for details."}), 500
 
 
 if __name__ == "__main__":

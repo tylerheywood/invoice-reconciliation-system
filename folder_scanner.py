@@ -213,8 +213,17 @@ def scan_folder_to_db(input_dir: Path) -> dict:
             staging_name = f"{doc_hash[:12]}_01_{safe_name}"
             staging_path = STAGING_DIR / staging_name
 
-            if not staging_path.exists():
-                shutil.copy2(pdf_path, staging_path)
+            try:
+                # Copy only if not already staged; use exclusive create via
+                # a temp file + rename to avoid TOCTOU races.
+                tmp_path = staging_path.with_suffix(".tmp")
+                shutil.copy2(pdf_path, tmp_path)
+                tmp_path.rename(staging_path)
+            except (FileExistsError, OSError):
+                # Already staged or rename collision — safe to skip
+                if tmp_path.exists():
+                    tmp_path.unlink()
+
 
             pdfs_saved += 1
 

@@ -1,4 +1,4 @@
-pywin32>=306
+pywin32>=306; sys_platform == "win32"
 
 pdfplumber>=0.10.3
 pandas>=2.2.0

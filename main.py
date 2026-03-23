@@ -4,9 +4,10 @@ from datetime import datetime, timezone
 import os
 from pathlib import Path
 '''
-Remaining task list before V1 sign-off:
-- Worklist output
-- Scanner abstraction cleanup (potentially v1.1)
+Invoice Reconciliation System — Pipeline Entry Point
+
+Processes invoices from a local input folder through PO matching,
+validation, and value extraction. Outputs a snapshot for the dashboard.
 '''
 
 # -----------------------------------------------------------------------------
@@ -23,9 +24,6 @@ def dprint(*args, **kwargs) -> None:
     if DEBUG:
         print(*args, **kwargs)
 
-print(f"[BOOT] {datetime.now(timezone.utc).isoformat()} main starting", flush=True)
-dprint("[DEBUG] Enabled via ICS_DEBUG=1")
-
 from folder_scanner import scan_folder_to_db
 from po_validation import run_po_validation
 from po_detection import run_po_detection
@@ -34,8 +32,6 @@ from load_po_master import load_po_master
 from worklist import refresh_worklist_tables
 from value_extraction import run_value_extraction
 from snapshot import write_snapshot
-
-print("Starting Stage 1: PO Master Load", flush=True)
 
 
 STAGING_DIR = Path(__file__).resolve().parent / "staging"
@@ -53,7 +49,8 @@ def print_tables() -> None:
 
 
 def main() -> None:
-    print("=== AP Inbox Control — Pipeline Run ===")
+    print(f"[BOOT] {datetime.now(timezone.utc).isoformat()} main starting", flush=True)
+    print("=== Invoice Reconciliation System — Pipeline Run ===")
     dprint("[DEBUG] Enabled via ICS_DEBUG=1")
 
     # 1) Ensure schema exists
@@ -62,8 +59,23 @@ def main() -> None:
 
     # 2) Insert current PO Master
     print("\n--- Stage 1: PO Master Load ---")
-    po_master_summary = load_po_master(Path("data/Purchase_orders.csv"))
-    print(po_master_summary)
+    data_dir = Path(__file__).resolve().parent / "data"
+    po_upload_candidates = sorted(data_dir.glob("po_upload.*")) if data_dir.is_dir() else []
+    default_po_path = data_dir / "Purchase_orders.csv"
+
+    if po_upload_candidates:
+        po_file = po_upload_candidates[0]
+    elif default_po_path.exists():
+        po_file = default_po_path
+    else:
+        po_file = None
+
+    if po_file:
+        po_master_summary = load_po_master(po_file)
+        print(po_master_summary)
+    else:
+        print("[WARN] No PO master file found in data/. Skipping PO Master Load.")
+        print("       Upload one via the dashboard or place Purchase_orders.csv in data/")
 
     # 3) Scan input folder + persist presence + hashes
     print("\n--- Stage 2: Folder Scan ---", flush=True)
@@ -97,8 +109,10 @@ def main() -> None:
     print("\n=== Done ===")
 
     conn = get_connection()
-    run_id = refresh_worklist_tables(conn)
-    conn.close()
+    try:
+        run_id = refresh_worklist_tables(conn)
+    finally:
+        conn.close()
     print(f"Worklist refreshed. run_id={run_id}")
 
     # Write local snapshot for the dashboard

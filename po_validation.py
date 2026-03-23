@@ -32,96 +32,104 @@ def run_po_validation() -> dict:
     conn = get_connection()
     cur = conn.cursor()
 
-    # Defensive: anything not SINGLE_PO_DETECTED cannot be "ready"
-    cur.execute(
-        """
-        UPDATE inbox_invoice
-        SET ready_to_post = 0
-        WHERE is_currently_present = 1
-          AND posted_datetime IS NULL
-          AND (po_match_status IS NULL OR po_match_status <> ?)
-        """,
-        (STATUS_SINGLE_PO_DETECTED,),
-    )
-
-    # Live validation approach:
-    # Reset current SINGLE_PO_DETECTED invoices back to UNVALIDATED each run,
-    # then compute the correct status based on latest po_master truth.
-    cur.execute(
-        """
-        UPDATE inbox_invoice
-        SET po_validation_status = ?,
-            ready_to_post = 0
-        WHERE is_currently_present = 1
-          AND posted_datetime IS NULL
-          AND po_match_status = ?
-        """,
-        (STATUS_UNVALIDATED, STATUS_SINGLE_PO_DETECTED),
-    )
-
-    # Validate ALL current SINGLE_PO_DETECTED invoices (not just UNVALIDATED)
-    cur.execute(
-        """
-        SELECT
-            ii.document_hash,
-            ip.po_number,
-            pm.po_status,
-            pm.approval_status
-        FROM inbox_invoice ii
-        JOIN invoice_po ip
-            ON ii.document_hash = ip.document_hash
-        LEFT JOIN po_master pm
-            ON ip.po_number = pm.po_number
-        WHERE ii.is_currently_present = 1
-          AND ii.posted_datetime IS NULL
-          AND ii.po_match_status = ?
-        """,
-        (STATUS_SINGLE_PO_DETECTED,),
-    )
-
-    rows = cur.fetchall()
-
     validated = valid = not_in_master = not_open = 0
 
-    for row in rows:
-        document_hash = row["document_hash"]
-        po_status = row["po_status"]
-        approval_status = row["approval_status"]
+    try:
+        conn.execute("BEGIN")
 
-        if po_status is None:
-            new_validation_status = STATUS_PO_NOT_IN_MASTER
-            ready_to_post = 0
-            not_in_master += 1
+        # Defensive: anything not SINGLE_PO_DETECTED cannot be "ready"
+        cur.execute(
+            """
+            UPDATE inbox_invoice
+            SET ready_to_post = 0
+            WHERE is_currently_present = 1
+              AND posted_datetime IS NULL
+              AND (po_match_status IS NULL OR po_match_status <> ?)
+            """,
+            (STATUS_SINGLE_PO_DETECTED,),
+        )
 
-        elif po_status != VALID_OPEN_STATUS:
-            new_validation_status = STATUS_PO_NOT_OPEN
-            ready_to_post = 0
-            not_open += 1
-
-        elif approval_status != VALID_APPROVAL_STATUS:
-            new_validation_status = STATUS_PO_NOT_CONFIRMED
-            ready_to_post = 0
-            not_open += 1  # optional: or add a new counter
-
-        else:
-            new_validation_status = STATUS_VALID_PO
-            ready_to_post = 1
-            valid += 1
-
+        # Live validation approach:
+        # Reset current SINGLE_PO_DETECTED invoices back to UNVALIDATED each run,
+        # then compute the correct status based on latest po_master truth.
         cur.execute(
             """
             UPDATE inbox_invoice
             SET po_validation_status = ?,
-                ready_to_post = ?
-            WHERE document_hash = ?
+                ready_to_post = 0
+            WHERE is_currently_present = 1
+              AND posted_datetime IS NULL
+              AND po_match_status = ?
             """,
-            (new_validation_status, ready_to_post, document_hash),
+            (STATUS_UNVALIDATED, STATUS_SINGLE_PO_DETECTED),
         )
 
-        validated += 1
+        # Validate ALL current SINGLE_PO_DETECTED invoices (not just UNVALIDATED)
+        cur.execute(
+            """
+            SELECT
+                ii.document_hash,
+                ip.po_number,
+                pm.po_status,
+                pm.approval_status
+            FROM inbox_invoice ii
+            JOIN invoice_po ip
+                ON ii.document_hash = ip.document_hash
+            LEFT JOIN po_master pm
+                ON ip.po_number = pm.po_number
+            WHERE ii.is_currently_present = 1
+              AND ii.posted_datetime IS NULL
+              AND ii.po_match_status = ?
+            """,
+            (STATUS_SINGLE_PO_DETECTED,),
+        )
 
-    conn.commit()
-    conn.close()
+        rows = cur.fetchall()
+
+        for row in rows:
+            document_hash = row["document_hash"]
+            po_status = row["po_status"]
+            approval_status = row["approval_status"]
+
+            if po_status is None:
+                new_validation_status = STATUS_PO_NOT_IN_MASTER
+                ready_to_post = 0
+                not_in_master += 1
+
+            elif po_status != VALID_OPEN_STATUS:
+                new_validation_status = STATUS_PO_NOT_OPEN
+                ready_to_post = 0
+                not_open += 1
+
+            elif approval_status != VALID_APPROVAL_STATUS:
+                new_validation_status = STATUS_PO_NOT_CONFIRMED
+                ready_to_post = 0
+                not_open += 1  # optional: or add a new counter
+
+            else:
+                new_validation_status = STATUS_VALID_PO
+                ready_to_post = 1
+                valid += 1
+
+            cur.execute(
+                """
+                UPDATE inbox_invoice
+                SET po_validation_status = ?,
+                    ready_to_post = ?
+                WHERE document_hash = ?
+                """,
+                (new_validation_status, ready_to_post, document_hash),
+            )
+
+            validated += 1
+
+        conn.commit()
+
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
     return {
         "validated": validated,

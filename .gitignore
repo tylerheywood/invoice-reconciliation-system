@@ -1,6 +1,9 @@
 # PyCharm
 .idea/
 
+# Claude Code
+.claude/
+
 # Python
 __pycache__/
 *.pyc
@@ -9,5 +12,7 @@ __pycache__/
 *.db
 *.db-journal
 staging/
+logs/
+exports/
 run_main.local.ps1
 task_main.log

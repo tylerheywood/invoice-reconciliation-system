@@ -220,6 +220,63 @@ select {
   border-radius: 10px;
   padding: 6px 10px;
 }
+
+/* PO Upload */
+.upload-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 12px 0 0 0;
+  padding: 10px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--bg-panel);
+}
+
+.upload-bar label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.upload-bar input[type="file"] {
+  font-size: 13px;
+  color: var(--text-main);
+}
+
+.upload-bar input[type="file"]::file-selector-button {
+  background: #020617;
+  color: var(--text-soft);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.upload-btn {
+  background: var(--accent);
+  color: #000;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.upload-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.upload-msg {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.upload-msg.ok { color: var(--accent); }
+.upload-msg.err { color: #f87171; }
   </style>
 </head>
 
@@ -227,6 +284,13 @@ select {
   <div class="topbar">
     <div class="title">AP Inbox Control (QAHE)</div>
     <div class="meta" id="meta">Loading…</div>
+  </div>
+
+  <div class="upload-bar">
+    <label for="po_file">Upload PO Master:</label>
+    <input type="file" id="po_file" accept=".csv,.xlsx" />
+    <button class="upload-btn" id="po_upload_btn">Upload</button>
+    <span class="upload-msg" id="po_upload_msg"></span>
   </div>
 
   <div class="tabs">
@@ -666,6 +730,46 @@ select {
   document.getElementById("wl_min_priority").addEventListener("change", loadSnapshot);
 
   loadSnapshot();
+
+  // ---- PO Upload ----
+  document.getElementById("po_upload_btn").addEventListener("click", async () => {
+    const fileInput = document.getElementById("po_file");
+    const msg = document.getElementById("po_upload_msg");
+    const btn = document.getElementById("po_upload_btn");
+
+    if (!fileInput.files.length) {
+      msg.textContent = "Select a file first";
+      msg.className = "upload-msg err";
+      return;
+    }
+
+    const form = new FormData();
+    form.append("file", fileInput.files[0]);
+
+    btn.disabled = true;
+    msg.textContent = "Uploading…";
+    msg.className = "upload-msg";
+
+    try {
+      const res = await fetch("/upload-po", { method: "POST", body: form });
+      const data = await res.json();
+      if (data.ok) {
+        msg.textContent = `Loaded ${data.po_loaded} PO rows. Refreshing…`;
+        msg.className = "upload-msg ok";
+        fileInput.value = "";
+        await loadSnapshot();
+        msg.textContent = `Loaded ${data.po_loaded} PO rows. Dashboard refreshed.`;
+      } else {
+        msg.textContent = data.error || "Upload failed";
+        msg.className = "upload-msg err";
+      }
+    } catch (e) {
+      msg.textContent = "Upload error: " + e.message;
+      msg.className = "upload-msg err";
+    } finally {
+      btn.disabled = false;
+    }
+  });
 </script>
 </body>
 </html>

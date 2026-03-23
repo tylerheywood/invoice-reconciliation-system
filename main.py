@@ -26,18 +26,21 @@ def dprint(*args, **kwargs) -> None:
 print(f"[BOOT] {datetime.now(timezone.utc).isoformat()} main starting", flush=True)
 dprint("[DEBUG] Enabled via ICS_DEBUG=1")
 
-from outlook_scanner import scan_outlook_to_db
+from folder_scanner import scan_folder_to_db
 from po_validation import run_po_validation
 from po_detection import run_po_detection
 from db import initialise_database, get_connection
 from load_po_master import load_po_master
 from worklist import refresh_worklist_tables
 from value_extraction import run_value_extraction
+from snapshot import write_snapshot
 
 print("Starting Stage 1: PO Master Load", flush=True)
 
 
 STAGING_DIR = Path(__file__).resolve().parent / "staging"
+INPUT_DIR = Path(os.getenv("ICS_INPUT_DIR", str(Path(__file__).resolve().parent / "input")))
+INPUT_DIR.mkdir(exist_ok=True)
 
 
 
@@ -62,11 +65,11 @@ def main() -> None:
     po_master_summary = load_po_master(Path("data/Purchase_orders.csv"))
     print(po_master_summary)
 
-    # 3) Scan Outlook + persist presence + hashes
-    print("\n--- Stage 2: Outlook Scan ---", flush=True)
-    print("[SCAN] starting outlook scan...", flush=True)
-    result = scan_outlook_to_db()
-    print("[SCAN] completed outlook scan", flush=True)
+    # 3) Scan input folder + persist presence + hashes
+    print("\n--- Stage 2: Folder Scan ---", flush=True)
+    print(f"[SCAN] scanning {INPUT_DIR} ...", flush=True)
+    result = scan_folder_to_db(input_dir=INPUT_DIR)
+    print("[SCAN] completed folder scan", flush=True)
     print(
         {
             "messages_seen": result.get("messages_seen"),
@@ -98,19 +101,9 @@ def main() -> None:
     conn.close()
     print(f"Worklist refreshed. run_id={run_id}")
 
-    # Optional publish step (controlled by env vars)
-    from publisher import PublishConfig, run_publish
-    publish_cfg = PublishConfig(
-        enabled=os.getenv("ICS_PUBLISH", "").lower() in ("1", "true", "yes"),
-        db_path=Path("inbox.db"),
-        out_path=Path("exports/snapshot.json"),
-        vps_host=os.getenv("ICS_VPS_HOST", ""),
-        remote_dir=os.getenv("ICS_VPS_REMOTE_DIR", "/var/www/ics-data"),
-    )
-    if publish_cfg.enabled and publish_cfg.vps_host:
-        run_publish(publish_cfg, log=print)  # <-- key fix: don't hide errors
-    else:
-        print("[PUBLISH] Skipped (disabled or missing host)")
+    # Write local snapshot for the dashboard
+    out = write_snapshot()
+    print(f"[SNAPSHOT] Written to {out}")
 
 
 if __name__ == "__main__":

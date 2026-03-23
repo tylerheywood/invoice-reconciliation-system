@@ -1,38 +1,38 @@
-# AP Inbox Control System (V1.0.0)
+# Invoice Reconciliation System (V1.0.0)
 
 ---
-> **TL;DR**  
-> 
-> ICS is a deterministic control layer for Accounts Payable inboxes.  
->  
-> It makes invoice intake **visible, explainable, and auditable** before invoices reach the ERP —  
-> without AI, OCR, or automation risk.  
->  
-> ICS tells AP teams **what is ready to post, what is blocked, and why**,  
+> **TL;DR**
+>
+> IRS is a deterministic reconciliation layer for Accounts Payable invoices.
+>
+> It makes invoice intake **visible, explainable, and auditable** before invoices reach the ERP —
+> without AI, OCR, or automation risk.
+>
+> IRS tells AP teams **what is ready to post, what is blocked, and why**,
 > reducing manual firefighting and restoring confidence at the point of entry.
 
 ---
 ## Executive Summary
 
-The **AP Inbox Control System (ICS)** is a deterministic, auditable control layer for
-Accounts Payable inboxes.
+The **Invoice Reconciliation System (IRS)** is a deterministic, auditable reconciliation layer for
+Accounts Payable invoices.
 
 It provides **clear visibility and control over invoices at the point of entry** —
 before they reach the ERP — without automation risk, AI, or probabilistic behaviour.
 
-ICS is designed for finance environments where **explainability, repeatability,
+IRS is designed for finance environments where **explainability, repeatability,
 and operational safety matter more than speed**.
 
 ---
 
 ### The Problem
 
-In many AP teams, the inbox itself becomes an uncontrolled workflow:
+In many AP teams, invoice intake becomes an uncontrolled workflow:
 
 - Invoices arrive without structure or visibility
 - It is unclear which invoices are ready to post vs blocked
 - Missing or invalid POs are discovered late
-- Managers lack reliable insight into value, age, and risk sitting in the inbox
+- Managers lack reliable insight into value, age, and risk sitting in the queue
 
 Traditional solutions attempt to solve this with:
 - automation first
@@ -45,24 +45,24 @@ This often **reduces trust rather than improving control**.
 
 ### The Approach
 
-ICS takes a different approach:
+IRS takes a different approach:
 
-- Treats the **inbox as a system of record**, not just a message queue
+- Treats the **input folder as a system of record**, not just a file drop
 - Extracts and validates invoice facts **deterministically**
 - Persists explicit truth at each pipeline stage
 - Derives a **single, actionable next step per invoice**
 
-No AI.  
-No OCR (V1).  
+No AI.
+No OCR (V1).
 No hidden decision-making.
 
 Every outcome is explainable.
 
 ---
 
-### What ICS Does (V1)
+### What IRS Does (V1)
 
-- Scans Outlook inbox folders and tracks invoice presence
+- Scans a local input folder and tracks invoice presence
 - Identifies invoice documents via SHA-256 hashing
 - Detects PO numbers using deterministic, regex-based rules
 - Validates detected POs against authoritative master data
@@ -71,7 +71,7 @@ Every outcome is explainable.
 
 ---
 
-### What ICS Does Not Do (V1)
+### What IRS Does Not Do (V1)
 
 - Does not post invoices to the ERP
 - Does not guess or estimate missing values
@@ -86,8 +86,8 @@ Every outcome is explainable.
   - **[Executive Summary](#executive-summary)**
     - [The Problem](#the-problem)
     - [The Approach](#the-approach)
-    - [What ICS Does (V1)](#what-ics-does-v1)
-    - [What ICS Does Not Do (V1)](#what-ics-does-not-do-v1)
+    - [What IRS Does (V1)](#what-irs-does-v1)
+    - [What IRS Does Not Do (V1)](#what-irs-does-not-do-v1)
 
 - **Body**
   - **[1.0 Design Principles](#10-design-principles)**
@@ -152,12 +152,12 @@ Every outcome is explainable.
 
 ---
 ### 2.1 Unit of Work
-- **Inbox email message**
-- PDF attachments treated as invoice documents
+- **Invoice PDF file** placed in the `./input` folder
+- Each PDF is treated as an invoice document
 
 ### 2.2 High-level Flow
-1. Scan Outlook inbox folder(s)
-2. Save PDF attachments to a local staging area
+1. Scan the `./input` folder for PDF files (recursively)
+2. Copy PDFs to a local staging area
 3. Hash PDFs (`sha256`) → `document_hash`
 4. Write message + invoice metadata to SQLite
 5. Extract deterministically:
@@ -173,28 +173,28 @@ Every outcome is explainable.
 
 ---
 
-- `inbox_message`  
-  Email-level metadata and presence tracking
+- `inbox_message`
+  Ingestion-level metadata and presence tracking
 
-- `inbox_invoice`  
+- `inbox_invoice`
   Document-level facts (keyed by `document_hash`)
 
-- `invoice_po`  
+- `invoice_po`
   Detected PO numbers (1:N per invoice)
 
-- `invoice_resolution`  
+- `invoice_resolution`
   Human decisions / terminal outcomes (V1: minimal)
 
-- `po_master`  
+- `po_master`
   Authoritative list of valid POs (loaded at runtime)
 
-- `supplier_master`  
+- `supplier_master`
   Supplier reference data (reserved for V2 usage)
 
-- `invoice_worklist`  
+- `invoice_worklist`
   Live worklist, next actions and detailed tasking logic
 
-- `invoice_worklist_history`  
+- `invoice_worklist_history`
   Worklist history for analysis and reference
 
 
@@ -208,8 +208,8 @@ Every outcome is explainable.
 - Prevents duplication across re-runs, moves, or re-scans
 
 ### 4.2 Presence Awareness
-- `is_currently_present` flips when emails leave the inbox
-- Enables accurate “what’s waiting right now” reporting
+- `is_currently_present` flips when invoices leave the input folder
+- Enables accurate "what's waiting right now" reporting
 
 ### 4.3 PO Detection Status (`po_match_status`)
 PO detection is **classification only** (not validation):
@@ -339,7 +339,7 @@ The worklist is a **deterministic, derived job queue** for Accounts Payable.
 
 It translates persisted invoice truth into **exactly one actionable next step per invoice**.
 
-The worklist does not introduce new state, approvals, or workflow logic.  
+The worklist does not introduce new state, approvals, or workflow logic.
 It is a **computed view** over existing invoice data.
 
 ---
@@ -354,7 +354,7 @@ The worklist is designed around the following principles:
   - Actions are derived directly from persisted invoice truth
 
 - **One action per invoice**
-  - Uses precedence-based rules (“first blocker wins”)
+  - Uses precedence-based rules ("first blocker wins")
   - Avoids competing or duplicated tasks
 
 - **AP-native semantics**
@@ -374,22 +374,22 @@ Each invoice is mapped to **one** of the following actions:
 - `READY TO POST`
 - `MANUAL REVIEW`
 
-Each row also includes an **action reason** explaining *why* the action was assigned  
+Each row also includes an **action reason** explaining *why* the action was assigned
 (e.g. `PO NOT OPEN`, `MISSING PO`, `NO TEXT LAYER`, `GROSS TOTAL NOT EXTRACTED`).
 
 The action reason is descriptive only and does not introduce additional workflow state.
 
 ---
 
-### 8.3 Classification Model 
+### 8.3 Classification Model
 
 Worklist classification is **precedence-based**.
 
-Rules are evaluated in a fixed order.  
+Rules are evaluated in a fixed order.
 The **first blocking condition wins** and determines the next action.
 
 Examples of blocking conditions include:
-- invoice not currently present in the inbox
+- invoice not currently present in the input folder
 - missing or unreadable text layer
 - missing or invalid PO
 - PO exists but is not open
@@ -399,7 +399,7 @@ This model ensures consistent outcomes across re-runs and prevents rule conflict
 
 ---
 
-### 8.4 Value Expectations 
+### 8.4 Value Expectations
 
 Invoices are considered value-complete if **`gross_total` is present**.
 
@@ -433,13 +433,12 @@ Items leave the worklist only when underlying invoice truth changes.
 ### 8.6 Invoice Identification
 
 Each worklist row includes **human-identifiable context** so AP users can locate the
-invoice in Outlook without access to internal staging folders.
+source invoice file.
 
 Included identifiers:
-- Sender domain 
-- Email subject
+- Source folder path
 - Attachment filename
-- Received datetime
+- Received/scanned datetime
 
 These fields are **descriptive only**.
 
@@ -473,7 +472,7 @@ The dashboard is a **read-only operational view** of the system.
 
 It does not perform validation, classification, estimation, or decision-making.
 
-All business logic runs **inside the pipeline** and persists truth to SQLite.  
+All business logic runs **inside the pipeline** and persists truth to SQLite.
 The dashboard simply **renders a published snapshot** of that truth.
 
 ---
@@ -533,7 +532,7 @@ If the snapshot is unavailable or invalid, the dashboard displays an error and *
 
 The dashboard exists to answer three questions only:
 
-1. What invoices are currently in the inbox?
+1. What invoices are currently in the queue?
 2. Which invoices are ready vs blocked?
 3. What human action is required next — and why?
 
@@ -551,13 +550,13 @@ It is **not** a workflow engine, approval system, or automation surface.
 ---
 1. Initialise database schema
 2. Load PO master data
-3. Scan Outlook inbox
+3. Scan input folder for invoice PDFs
 4. Run PO detection
 5. Run PO validation
 6. Run value extraction
 7. Update/Refresh Worklist
 
- --- 
+ ---
 ## 11.0 Author
 
 ---

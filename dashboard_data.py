@@ -447,6 +447,54 @@ def load_worklist_data(db_path: Path) -> list[dict[str, Any]]:
         return [dict(r) for r in rows]
 
 
+def load_po_master_data(db_path: Path) -> list[dict[str, Any]]:
+    with get_connection(db_path) as conn:
+        if not table_exists(conn, "po_master"):
+            return []
+        rows = fetch_rows(
+            conn,
+            """
+            SELECT
+                pm.po_number,
+                pm.supplier_account,
+                pm.po_status,
+                pm.approval_status,
+                pm.last_import_datetime,
+                COUNT(ii.document_hash) AS invoice_count,
+                SUM(CASE WHEN ii.gross_total IS NOT NULL AND ii.gross_total > 0
+                         THEN ii.gross_total ELSE 0 END) AS gross_total_pence
+            FROM po_master pm
+            LEFT JOIN invoice_po ip ON pm.po_number = ip.po_number
+            LEFT JOIN inbox_invoice ii ON ip.document_hash = ii.document_hash
+            GROUP BY pm.po_number
+            ORDER BY pm.po_number ASC
+            """,
+        )
+        return [dict(r) for r in rows]
+
+
+def load_invoices_data(db_path: Path) -> list[dict[str, Any]]:
+    with get_connection(db_path) as conn:
+        if not table_exists(conn, "inbox_invoice"):
+            return []
+        rows = fetch_rows(
+            conn,
+            """
+            SELECT
+                document_hash,
+                attachment_file_name,
+                po_match_status,
+                gross_total,
+                first_seen_datetime,
+                processing_status,
+                is_currently_present
+            FROM inbox_invoice
+            ORDER BY first_seen_datetime DESC
+            """,
+        )
+        return [dict(r) for r in rows]
+
+
 def load_trends_data(db_path: Path) -> list[dict[str, Any]]:
     with get_connection(db_path) as conn:
         if not table_exists(conn, "inbox_snapshot_daily"):

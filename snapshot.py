@@ -12,6 +12,8 @@ from dashboard_data import (
     load_ageing_buckets_data,
     load_trends_data,
     load_worklist_data,
+    load_po_master_data,
+    load_invoices_data,
 )
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent / "inbox.db"
@@ -36,6 +38,8 @@ def build_snapshot(
         "ageing_buckets": load_ageing_buckets_data(db_path),
         "worklist": load_worklist_data(db_path) if include_worklist else [],
         "trends": load_trends_data(db_path) if include_trends else [],
+        "po_master": load_po_master_data(db_path),
+        "invoices": load_invoices_data(db_path),
     }
     return snapshot
 

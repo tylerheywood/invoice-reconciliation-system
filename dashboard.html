@@ -277,6 +277,72 @@ select {
 
 .upload-msg.ok { color: var(--accent); }
 .upload-msg.err { color: #f87171; }
+
+/* Pagination */
+.pager {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 10px 0;
+  flex-wrap: wrap;
+}
+
+.pager-btn {
+  background: #020617;
+  color: var(--text-soft);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.pager-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.pager-info {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.pager select {
+  font-size: 12px;
+}
+
+/* Accordion */
+.accordion-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  margin: 10px 0;
+}
+
+.accordion-header h3 {
+  margin: 0;
+}
+
+.accordion-arrow {
+  display: inline-block;
+  font-size: 14px;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.accordion-header.collapsed .accordion-arrow {
+  transform: rotate(-90deg);
+}
+
+.accordion-body {
+  overflow: hidden;
+}
+
+.accordion-body.collapsed {
+  display: none;
+}
   </style>
 </head>
 
@@ -299,6 +365,7 @@ select {
     <div class="tab" data-tab="ageing">Ageing</div>
     <div class="tab" data-tab="worklist">Worklist</div>
     <div class="tab" data-tab="trends">Trends</div>
+    <div class="tab" data-tab="data">Data</div>
   </div>
 
   <div id="error" class="row err" style="display:none;"></div>
@@ -433,6 +500,85 @@ select {
           <thead id="trends_head"></thead>
           <tbody id="trends_body"></tbody>
         </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Data -->
+  <div class="panel" id="data">
+    <div class="row">
+      <div class="accordion-header" data-accordion="po_master_section">
+        <span class="accordion-arrow">&#9660;</span>
+        <h3>PO Master</h3>
+        <span class="muted small" id="po_master_summary" style="margin-left:8px;">—</span>
+      </div>
+      <div class="accordion-body" id="po_master_section">
+        <div class="controls" style="margin-bottom:10px;">
+          <div class="control">
+            <label for="po_master_filter" class="small">Filter</label>
+            <input id="po_master_filter" type="text" placeholder="PO number or supplier…" style="background:#020617;border:1px solid var(--border-subtle);color:var(--text-main);border-radius:10px;padding:6px 10px;font-size:13px;" />
+          </div>
+          <div class="muted small" id="po_master_count">—</div>
+        </div>
+        <div style="overflow:auto;">
+          <table>
+            <thead>
+              <tr><th>PO Number</th><th>Supplier Account</th><th>PO Status</th><th>Approval Status</th><th>Invoices</th><th>Gross Total</th><th>Imported</th></tr>
+            </thead>
+            <tbody id="po_master_body"></tbody>
+          </table>
+        </div>
+        <div class="pager" id="po_master_pager" style="display:none;">
+          <button class="pager-btn" id="po_master_prev">Prev</button>
+          <span class="pager-info" id="po_master_page_info">—</span>
+          <button class="pager-btn" id="po_master_next">Next</button>
+          <label class="pager-info">Rows:</label>
+          <select id="po_master_page_size">
+            <option value="50">50</option>
+            <option value="100" selected>100</option>
+            <option value="250">250</option>
+            <option value="500">500</option>
+          </select>
+        </div>
+        <div id="po_master_empty" class="muted" style="display:none; margin-top:10px;">No PO Master loaded. Upload a file using the upload bar.</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="accordion-header" data-accordion="invoices_section">
+        <span class="accordion-arrow">&#9660;</span>
+        <h3>Invoices</h3>
+        <span class="muted small" id="invoices_summary" style="margin-left:8px;">—</span>
+      </div>
+      <div class="accordion-body" id="invoices_section">
+        <div class="controls" style="margin-bottom:10px;">
+          <div class="control">
+            <label for="invoices_filter" class="small">Filter</label>
+            <input id="invoices_filter" type="text" placeholder="Filename or PO status…" style="background:#020617;border:1px solid var(--border-subtle);color:var(--text-main);border-radius:10px;padding:6px 10px;font-size:13px;" />
+          </div>
+          <div class="muted small" id="invoices_count">—</div>
+        </div>
+        <div style="overflow:auto;">
+          <table>
+            <thead>
+              <tr><th>Filename</th><th>PO Match Status</th><th>Gross Total</th><th>First Seen</th><th>Processing Status</th><th>Present</th></tr>
+            </thead>
+            <tbody id="invoices_body"></tbody>
+          </table>
+        </div>
+        <div class="pager" id="invoices_pager" style="display:none;">
+          <button class="pager-btn" id="invoices_prev">Prev</button>
+          <span class="pager-info" id="invoices_page_info">—</span>
+          <button class="pager-btn" id="invoices_next">Next</button>
+          <label class="pager-info">Rows:</label>
+          <select id="invoices_page_size">
+            <option value="50">50</option>
+            <option value="100" selected>100</option>
+            <option value="250">250</option>
+            <option value="500">500</option>
+          </select>
+        </div>
+        <div id="invoices_empty" class="muted" style="display:none; margin-top:10px;">No invoices found. Run the pipeline to process your input folder.</div>
       </div>
     </div>
   </div>
@@ -738,11 +884,179 @@ select {
         });
       }
 
+      // Data tab — PO Master
+      renderPoMaster(data);
+
+      // Data tab — Invoices
+      renderInvoices(data);
+
     } catch (e) {
       const el = document.getElementById("error");
       el.style.display = "block";
       el.textContent = "Error: " + e.message;
     }
+  }
+
+  // ---- Data tab: PO Master (paginated) ----
+  let _poMasterData = [];
+  let _poMasterFiltered = [];
+  let _poMasterPage = 0;
+
+  function renderPoMaster(data) {
+    const rows = data.po_master || [];
+    _poMasterData = rows;
+    _poMasterPage = 0;
+
+    const summary = document.getElementById("po_master_summary");
+    const empty = document.getElementById("po_master_empty");
+    const pager = document.getElementById("po_master_pager");
+
+    if (rows.length === 0) {
+      summary.textContent = "—";
+      document.getElementById("po_master_body").innerHTML = "";
+      document.getElementById("po_master_count").textContent = "—";
+      pager.style.display = "none";
+      empty.style.display = "block";
+      return;
+    }
+    empty.style.display = "none";
+
+    const lastImport = rows[0].last_import_datetime || "—";
+    summary.textContent = `${rows.length} PO(s) loaded · Last import: ${fmtIso(lastImport)}`;
+
+    filterPoMaster();
+  }
+
+  function filterPoMaster() {
+    const q = (document.getElementById("po_master_filter").value || "").toLowerCase();
+
+    _poMasterFiltered = _poMasterData.filter(r => {
+      if (!q) return true;
+      return (r.po_number || "").toLowerCase().includes(q)
+          || (r.supplier_account || "").toLowerCase().includes(q)
+          || gbp(r.gross_total_pence).replace(/,/g, "").toLowerCase().includes(q);
+    });
+
+    _poMasterPage = 0;
+    document.getElementById("po_master_count").textContent = `${_poMasterFiltered.length} of ${_poMasterData.length} row(s)`;
+    renderPoMasterPage();
+  }
+
+  function renderPoMasterPage() {
+    const pageSize = parseInt(document.getElementById("po_master_page_size").value, 10);
+    const totalPages = Math.max(1, Math.ceil(_poMasterFiltered.length / pageSize));
+    if (_poMasterPage >= totalPages) _poMasterPage = totalPages - 1;
+    if (_poMasterPage < 0) _poMasterPage = 0;
+
+    const start = _poMasterPage * pageSize;
+    const page = _poMasterFiltered.slice(start, start + pageSize);
+
+    const body = document.getElementById("po_master_body");
+    body.innerHTML = "";
+
+    page.forEach(r => {
+      const tr = document.createElement("tr");
+      const invCount = (r.invoice_count != null && r.invoice_count > 0) ? String(r.invoice_count) : "—";
+      const grossVal = (r.gross_total_pence != null && r.gross_total_pence > 0) ? gbp(r.gross_total_pence) : "—";
+      [r.po_number, r.supplier_account, r.po_status, r.approval_status, invCount, grossVal, fmtIso(r.last_import_datetime)].forEach(val => {
+        const td = document.createElement("td");
+        td.textContent = (val === null || val === undefined || val === "") ? "—" : val;
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+
+    const pager = document.getElementById("po_master_pager");
+    pager.style.display = _poMasterFiltered.length > 0 ? "flex" : "none";
+    document.getElementById("po_master_page_info").textContent =
+      `Page ${_poMasterPage + 1} of ${totalPages} (${_poMasterFiltered.length} rows)`;
+    document.getElementById("po_master_prev").disabled = (_poMasterPage === 0);
+    document.getElementById("po_master_next").disabled = (_poMasterPage >= totalPages - 1);
+  }
+
+  // ---- Data tab: Invoices (paginated) ----
+  let _invoicesData = [];
+  let _invoicesFiltered = [];
+  let _invoicesPage = 0;
+
+  function renderInvoices(data) {
+    const rows = data.invoices || [];
+    _invoicesData = rows;
+    _invoicesPage = 0;
+
+    const summary = document.getElementById("invoices_summary");
+    const empty = document.getElementById("invoices_empty");
+    const pager = document.getElementById("invoices_pager");
+
+    if (rows.length === 0) {
+      summary.textContent = "—";
+      document.getElementById("invoices_body").innerHTML = "";
+      document.getElementById("invoices_count").textContent = "—";
+      pager.style.display = "none";
+      empty.style.display = "block";
+      return;
+    }
+    empty.style.display = "none";
+
+    const presentCount = rows.filter(r => Number(r.is_currently_present ?? 0) === 1).length;
+    summary.textContent = `${rows.length} invoice(s) total · ${presentCount} currently present`;
+
+    filterInvoices();
+  }
+
+  function filterInvoices() {
+    const q = (document.getElementById("invoices_filter").value || "").toLowerCase();
+
+    _invoicesFiltered = _invoicesData.filter(r => {
+      if (!q) return true;
+      return (r.attachment_file_name || "").toLowerCase().includes(q)
+          || (r.po_match_status || "").toLowerCase().includes(q)
+          || (r.processing_status || "").toLowerCase().includes(q)
+          || gbp(r.gross_total).replace(/,/g, "").toLowerCase().includes(q);
+    });
+
+    _invoicesPage = 0;
+    document.getElementById("invoices_count").textContent = `${_invoicesFiltered.length} of ${_invoicesData.length} row(s)`;
+    renderInvoicesPage();
+  }
+
+  function renderInvoicesPage() {
+    const pageSize = parseInt(document.getElementById("invoices_page_size").value, 10);
+    const totalPages = Math.max(1, Math.ceil(_invoicesFiltered.length / pageSize));
+    if (_invoicesPage >= totalPages) _invoicesPage = totalPages - 1;
+    if (_invoicesPage < 0) _invoicesPage = 0;
+
+    const start = _invoicesPage * pageSize;
+    const page = _invoicesFiltered.slice(start, start + pageSize);
+
+    const body = document.getElementById("invoices_body");
+    body.innerHTML = "";
+
+    page.forEach(r => {
+      const tr = document.createElement("tr");
+      const present = Number(r.is_currently_present ?? 0) === 1 ? "Yes" : "No";
+      const vals = [
+        r.attachment_file_name,
+        r.po_match_status,
+        gbp(r.gross_total),
+        fmtIso(r.first_seen_datetime),
+        r.processing_status,
+        present
+      ];
+      vals.forEach(val => {
+        const td = document.createElement("td");
+        td.textContent = (val === null || val === undefined || val === "") ? "—" : String(val);
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+
+    const pager = document.getElementById("invoices_pager");
+    pager.style.display = _invoicesFiltered.length > 0 ? "flex" : "none";
+    document.getElementById("invoices_page_info").textContent =
+      `Page ${_invoicesPage + 1} of ${totalPages} (${_invoicesFiltered.length} rows)`;
+    document.getElementById("invoices_prev").disabled = (_invoicesPage === 0);
+    document.getElementById("invoices_next").disabled = (_invoicesPage >= totalPages - 1);
   }
 
   // Tabs
@@ -755,9 +1069,31 @@ select {
     });
   });
 
+  // Accordion toggle
+  document.querySelectorAll(".accordion-header").forEach(header => {
+    header.addEventListener("click", () => {
+      const targetId = header.getAttribute("data-accordion");
+      const body = document.getElementById(targetId);
+      header.classList.toggle("collapsed");
+      body.classList.toggle("collapsed");
+    });
+  });
+
   // Worklist filters rerender (no need to refetch, but simplest to keep consistent)
   document.getElementById("wl_present_only").addEventListener("change", loadSnapshot);
   document.getElementById("wl_min_priority").addEventListener("change", loadSnapshot);
+
+  // Data tab filters (client-side only, no refetch)
+  document.getElementById("po_master_filter").addEventListener("input", filterPoMaster);
+  document.getElementById("invoices_filter").addEventListener("input", filterInvoices);
+
+  // Data tab pagination
+  document.getElementById("po_master_prev").addEventListener("click", () => { _poMasterPage--; renderPoMasterPage(); });
+  document.getElementById("po_master_next").addEventListener("click", () => { _poMasterPage++; renderPoMasterPage(); });
+  document.getElementById("po_master_page_size").addEventListener("change", () => { _poMasterPage = 0; renderPoMasterPage(); });
+  document.getElementById("invoices_prev").addEventListener("click", () => { _invoicesPage--; renderInvoicesPage(); });
+  document.getElementById("invoices_next").addEventListener("click", () => { _invoicesPage++; renderInvoicesPage(); });
+  document.getElementById("invoices_page_size").addEventListener("change", () => { _invoicesPage = 0; renderInvoicesPage(); });
 
   loadSnapshot();
 

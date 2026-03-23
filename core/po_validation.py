@@ -1,4 +1,4 @@
-from db import get_connection
+from .db import get_connection
 
 VALID_OPEN_STATUS = "Open order"
 VALID_APPROVAL_STATUS = "Confirmed"
@@ -13,21 +13,8 @@ STATUS_VALID_PO = "VALID_PO"
 
 def run_po_validation() -> dict:
     """
-    Validates detected POs against po_master.
-
-    Rules:
-    - Detection must be SINGLE_PO_DETECTED (po_match_status)
-    - PO must exist in po_master
-    - PO status must be 'Open order'
-
-    Writes:
-    - po_validation_status (truth of validation)
-    - ready_to_post (canonical dashboard/worklist flag)
-
-    V1 live-validation behaviour:
-    - Re-validates all currently-present SINGLE_PO_DETECTED invoices each run
-      (so PO status changes in po_master are reflected in inbox truth + worklist).
-    - Excludes invoices with posted_datetime not null (treated as terminal).
+    Validate detected POs against po_master. Re-validates all currently-present
+    SINGLE_PO_DETECTED invoices each run so PO master changes are reflected immediately.
     """
     conn = get_connection()
     cur = conn.cursor()
@@ -40,7 +27,7 @@ def run_po_validation() -> dict:
         # Defensive: anything not SINGLE_PO_DETECTED cannot be "ready"
         cur.execute(
             """
-            UPDATE inbox_invoice
+            UPDATE invoice_document
             SET ready_to_post = 0
             WHERE is_currently_present = 1
               AND posted_datetime IS NULL
@@ -54,7 +41,7 @@ def run_po_validation() -> dict:
         # then compute the correct status based on latest po_master truth.
         cur.execute(
             """
-            UPDATE inbox_invoice
+            UPDATE invoice_document
             SET po_validation_status = ?,
                 ready_to_post = 0
             WHERE is_currently_present = 1
@@ -72,7 +59,7 @@ def run_po_validation() -> dict:
                 ip.po_number,
                 pm.po_status,
                 pm.approval_status
-            FROM inbox_invoice ii
+            FROM invoice_document ii
             JOIN invoice_po ip
                 ON ii.document_hash = ip.document_hash
             LEFT JOIN po_master pm
@@ -104,7 +91,7 @@ def run_po_validation() -> dict:
             elif approval_status != VALID_APPROVAL_STATUS:
                 new_validation_status = STATUS_PO_NOT_CONFIRMED
                 ready_to_post = 0
-                not_open += 1  # optional: or add a new counter
+                not_open += 1
 
             else:
                 new_validation_status = STATUS_VALID_PO
@@ -113,7 +100,7 @@ def run_po_validation() -> dict:
 
             cur.execute(
                 """
-                UPDATE inbox_invoice
+                UPDATE invoice_document
                 SET po_validation_status = ?,
                     ready_to_post = ?
                 WHERE document_hash = ?

@@ -2,7 +2,7 @@ from pathlib import Path
 import csv
 from datetime import datetime, timezone
 
-from db import get_connection
+from .db import get_connection
 
 
 def _read_rows_csv(path: Path) -> list[dict[str, str]]:

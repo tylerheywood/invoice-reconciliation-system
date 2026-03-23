@@ -9,7 +9,8 @@ __pycache__/
 *.pyc
 
 # Local data / runtime
-*.db
+irs.db
+inbox.db
 *.db-journal
 staging/
 input/

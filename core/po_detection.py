@@ -8,17 +8,15 @@ from typing import Callable, Dict, List, Optional
 
 import pdfplumber  # pip install pdfplumber
 
-from db import get_connection
-from fingerprint import sha256_file
+from .db import get_connection
+from .fingerprint import sha256_file
 
+"""
+PO detection for the IRS pipeline.
 
-# =============================================================================
-# PO Detection (V1)
-#
-# DEBUG mode:
-#   - Toggle DEBUG below, or set env var ICS_DEBUG=1
-#   - Logs are truncated to avoid megaspam
-# =============================================================================
+Extracts text from staged PDFs, detects PO numbers via regex patterns,
+and writes classification results back to the database.
+"""
 
 DEBUG = False
 
@@ -79,13 +77,7 @@ class PoDetectionResult:
 
 @dataclass(frozen=True)
 class PoPattern:
-    """
-    A single PO detection variant.
-
-    - regex: finds a PO token
-    - normalizer: returns canonical PO string (QAHE-PO-XXXXXX)
-    - allow: optional predicate to suppress overlaps/false positives
-    """
+    """A single PO detection pattern: regex, normalizer, and optional overlap guard."""
     regex: re.Pattern
     normalizer: Callable[[re.Match], str]
     allow: Optional[Callable[[str, re.Match], bool]] = None
@@ -99,9 +91,7 @@ PO_DIGITS = r"([0-9]{6})"
 
 
 def normalize_qahe_po_digits(digits: str) -> str:
-    """
-    Canonical PO format as per po_master: QAHE-PO-XXXXXX
-    """
+    """Normalise extracted digits to the canonical PO format used in po_master."""
     cleaned = re.sub(r"\D+", "", digits)
     if len(cleaned) != 6:
         raise ValueError(f"Invalid PO digits: {digits!r}")
@@ -109,10 +99,7 @@ def normalize_qahe_po_digits(digits: str) -> str:
 
 
 def allow_bare_po_match(text: str, match: re.Match) -> bool:
-    """
-    Prevent the bare PO matcher ("PO-123456") from also matching inside an explicit
-    QAHE PO like "QAHE - PO - 123456".
-    """
+    """Prevent the bare PO matcher from double-matching inside a full-prefix PO string."""
     start = match.start()
     if start == 0:
         return True
@@ -167,12 +154,7 @@ def extract_text_from_pdf(pdf_path: Path) -> str:
 
 
 def detect_po_numbers(text: str) -> List[str]:
-    """
-    Deterministic PO extraction.
-    - Finds matches with PO_PATTERNS
-    - Normalises to canonical form (QAHE-PO-XXXXXX)
-    - Returns unique values in first-seen order
-    """
+    """Extract PO numbers from text. Returns unique canonical values in first-seen order."""
     if not text:
         return []
 
@@ -245,7 +227,7 @@ def write_po_results(conn, *, document_hash: str, result: PoDetectionResult) -> 
 
     cur.execute(
         """
-        UPDATE inbox_invoice
+        UPDATE invoice_document
         SET
             po_count = ?,
             po_match_status = ?,
@@ -287,7 +269,7 @@ def run_po_detection(*, staging_dir: Path) -> dict:
         rows = cur.execute(
             """
             SELECT document_hash
-            FROM inbox_invoice
+            FROM invoice_document
             WHERE is_currently_present = 1
               AND (po_match_status IS NULL OR po_match_status = 'UNSCANNED')
             ORDER BY document_hash ASC

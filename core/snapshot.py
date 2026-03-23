@@ -6,7 +6,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from dashboard_data import (
+from .dashboard_data import (
     load_overview_data,
     load_status_breakdown_data,
     load_ageing_buckets_data,
@@ -16,8 +16,8 @@ from dashboard_data import (
     load_invoices_data,
 )
 
-DEFAULT_DB_PATH = Path(__file__).resolve().parent / "inbox.db"
-DEFAULT_OUT_PATH = Path(__file__).resolve().parent / "exports" / "snapshot.json"
+DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "irs.db"
+DEFAULT_OUT_PATH = Path(__file__).resolve().parent.parent / "exports" / "snapshot.json"
 
 
 def build_snapshot(

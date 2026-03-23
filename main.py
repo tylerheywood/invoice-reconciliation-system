@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-import os
-from pathlib import Path
 '''
 Invoice Reconciliation System — Pipeline Entry Point
 
@@ -10,11 +7,11 @@ Processes invoices from a local input folder through PO matching,
 validation, and value extraction. Outputs a snapshot for the dashboard.
 '''
 
-# -----------------------------------------------------------------------------
-# Debug toggle
-#   - default DEBUG=False
-#   - override with env var: ICS_DEBUG=1
-# -----------------------------------------------------------------------------
+from datetime import datetime, timezone
+import os
+import sys
+from pathlib import Path
+
 DEBUG = False
 _ENV_DEBUG = os.getenv("ICS_DEBUG", "").strip().lower()
 if _ENV_DEBUG in ("1", "true", "yes", "y", "on"):
@@ -24,20 +21,27 @@ def dprint(*args, **kwargs) -> None:
     if DEBUG:
         print(*args, **kwargs)
 
-from folder_scanner import scan_folder_to_db
-from po_validation import run_po_validation
-from po_detection import run_po_detection
-from db import initialise_database, get_connection
-from load_po_master import load_po_master
-from worklist import refresh_worklist_tables
-from value_extraction import run_value_extraction
-from snapshot import write_snapshot
+# Guard against stale database from a previous schema version
+_OLD_DB = Path(__file__).resolve().parent / "inbox.db"
+if _OLD_DB.exists():
+    print("[WARNING] inbox.db detected from a previous version. The schema has changed.")
+    print("Delete inbox.db and re-run the pipeline to initialise the new schema.")
+    print("Exiting.")
+    sys.exit(1)
+
+from core.folder_scanner import scan_folder_to_db
+from core.po_validation import run_po_validation
+from core.po_detection import run_po_detection
+from core.db import initialise_database, get_connection
+from core.load_po_master import load_po_master
+from core.worklist import refresh_worklist_tables
+from core.value_extraction import run_value_extraction
+from core.snapshot import write_snapshot
 
 
 STAGING_DIR = Path(__file__).resolve().parent / "staging"
 INPUT_DIR = Path(os.getenv("ICS_INPUT_DIR", str(Path(__file__).resolve().parent / "input")))
 INPUT_DIR.mkdir(exist_ok=True)
-
 
 
 def print_tables() -> None:
@@ -53,11 +57,11 @@ def main() -> None:
     print("=== Invoice Reconciliation System — Pipeline Run ===")
     dprint("[DEBUG] Enabled via ICS_DEBUG=1")
 
-    # 1) Ensure schema exists
+    # Ensure schema exists
     initialise_database()
     print_tables()
 
-    # 2) Insert current PO Master
+    # Stage 1: PO Master
     print("\n--- Stage 1: PO Master Load ---")
     data_dir = Path(__file__).resolve().parent / "data"
     po_upload_candidates = sorted(data_dir.glob("po_upload.*")) if data_dir.is_dir() else []
@@ -77,7 +81,7 @@ def main() -> None:
         print("[WARN] No PO master file found in data/. Skipping PO Master Load.")
         print("       Upload one via the dashboard or place Purchase_orders.csv in data/")
 
-    # 3) Scan input folder + persist presence + hashes
+    # Stage 2: Folder scan
     print("\n--- Stage 2: Folder Scan ---", flush=True)
     print(f"[SCAN] scanning {INPUT_DIR} ...", flush=True)
     result = scan_folder_to_db(input_dir=INPUT_DIR)
@@ -91,17 +95,17 @@ def main() -> None:
     )
     dprint("Full scan result:", result)
 
-    # 4) PO Detection from staging PDFs
+    # Stage 3: PO Detection
     print("\n--- Stage 3: PO Detection ---")
     po_summary = run_po_detection(staging_dir=STAGING_DIR)
     print(po_summary)
 
-    # 5) PO Validation against po_master
+    # Stage 4: PO Validation
     print("\n--- Stage 4: PO Validation ---")
     validation_summary = run_po_validation()
     print(validation_summary)
 
-    # 6) Value Extraction
+    # Stage 5: Value Extraction
     print("\n--- Stage 5: Value Extraction ---")
     value_summary = run_value_extraction(staging_dir=STAGING_DIR)
     print(value_summary)
@@ -115,7 +119,7 @@ def main() -> None:
         conn.close()
     print(f"Worklist refreshed. run_id={run_id}")
 
-    # Write local snapshot for the dashboard
+    # Stage 7: Dashboard snapshot
     out = write_snapshot()
     print(f"[SNAPSHOT] Written to {out}")
 

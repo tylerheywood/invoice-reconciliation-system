@@ -6,8 +6,8 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file, send_from_directory
 
-from load_po_master import load_po_master
-from snapshot import write_snapshot
+from core.load_po_master import load_po_master
+from core.snapshot import write_snapshot
 
 ROOT = Path(__file__).resolve().parent
 EXPORTS_DIR = ROOT / "exports"

@@ -6,12 +6,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from db import get_connection
-from po_detection import index_staging_pdfs  # reuse your deterministic hash->path index
+from .db import get_connection
+from .po_detection import index_staging_pdfs
 
-
-# =============================================================================
-# Value Extraction (V1)
+"""
+Value extraction for the IRS pipeline.
+Extracts net, VAT, and gross totals from invoice PDFs using strict,
+deterministic parsing rules. Values are stored as integer pence.
+"""
 #
 # DEBUG mode:
 #   - Toggle DEBUG below, or set env var ICS_DEBUG=1
@@ -175,7 +177,7 @@ def write_value_results(conn, *, document_hash: str, result: ValueResult) -> Non
     if result.rule == "NO_TEXT":
         cur.execute(
             """
-            UPDATE inbox_invoice
+            UPDATE invoice_document
             SET po_match_status = 'NO_TEXT_LAYER'
             WHERE document_hash = ?
             """,
@@ -185,7 +187,7 @@ def write_value_results(conn, *, document_hash: str, result: ValueResult) -> Non
 
     cur.execute(
         """
-        UPDATE inbox_invoice
+        UPDATE invoice_document
         SET net_total = ?,
             vat_total = ?,
             gross_total = ?
@@ -219,7 +221,7 @@ def run_value_extraction(*, staging_dir: Path) -> dict:
         rows = cur.execute(
             """
             SELECT document_hash
-            FROM inbox_invoice
+            FROM invoice_document
             WHERE is_currently_present = 1
               AND (gross_total IS NULL OR gross_total = 0)
               AND (po_match_status IS NULL OR po_match_status <> 'NO_TEXT_LAYER')
@@ -230,8 +232,7 @@ def run_value_extraction(*, staging_dir: Path) -> dict:
         _debug(f"[VALUE] Candidate invoices needing extraction: {len(rows)}")
         _debug(f"[VALUE] Staging index size: {len(hash_to_path)}")
 
-        # Import your existing extractor (keeps one source of truth)
-        from po_detection import extract_text_from_pdf  # uses pdfplumber deterministically
+        from .po_detection import extract_text_from_pdf
 
         for r in rows:
             document_hash = r["document_hash"]

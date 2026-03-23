@@ -105,14 +105,14 @@ def parse_iso_dt(value: Any) -> datetime | None:
 
 def load_overview_data(db_path: Path) -> dict[str, Any]:
     with get_connection(db_path) as conn:
-        if not table_exists(conn, "inbox_invoice"):
-            return {"_error": "Missing table: inbox_invoice"}
+        if not table_exists(conn, "invoice_document"):
+            return {"_error": "Missing table: invoice_document"}
 
-        invoice_cols = get_table_columns(conn, "inbox_invoice")
+        invoice_cols = get_table_columns(conn, "invoice_document")
         rule = build_readiness_rule(invoice_cols)
 
         total_present = int(
-            scalar(conn, "SELECT COUNT(*) FROM inbox_invoice WHERE is_currently_present = 1") or 0
+            scalar(conn, "SELECT COUNT(*) FROM invoice_document WHERE is_currently_present = 1") or 0
         )
 
         ready_count = int(
@@ -120,7 +120,7 @@ def load_overview_data(db_path: Path) -> dict[str, Any]:
                 conn,
                 f"""
                 SELECT COUNT(*)
-                FROM inbox_invoice
+                FROM invoice_document
                 WHERE is_currently_present = 1
                   AND ({rule.ready_predicate_sql})
                 """,
@@ -134,7 +134,7 @@ def load_overview_data(db_path: Path) -> dict[str, Any]:
                 conn,
                 f"""
                 SELECT COUNT(*)
-                FROM inbox_invoice
+                FROM invoice_document
                 WHERE is_currently_present = 1
                   AND ({rule.manual_predicate_sql})
                 """,
@@ -144,13 +144,13 @@ def load_overview_data(db_path: Path) -> dict[str, Any]:
         )
 
         po_confidence = round((ready_count / total_present) * 100, 1) if total_present else None
-        last_scan = scalar(conn, "SELECT MAX(last_scan_datetime) FROM inbox_invoice")
+        last_scan = scalar(conn, "SELECT MAX(last_scan_datetime) FROM invoice_document")
 
         oldest_first_seen = scalar(
             conn,
             """
             SELECT MIN(first_seen_datetime)
-            FROM inbox_invoice
+            FROM invoice_document
             WHERE is_currently_present = 1
             """,
         )
@@ -163,7 +163,7 @@ def load_overview_data(db_path: Path) -> dict[str, Any]:
             conn,
             """
             SELECT SUM(gross_total)
-            FROM inbox_invoice
+            FROM invoice_document
             WHERE is_currently_present = 1
               AND gross_total IS NOT NULL
               AND gross_total > 0
@@ -174,7 +174,7 @@ def load_overview_data(db_path: Path) -> dict[str, Any]:
             conn,
             """
             SELECT MAX(gross_total)
-            FROM inbox_invoice
+            FROM invoice_document
             WHERE is_currently_present = 1
               AND gross_total IS NOT NULL
               AND gross_total > 0
@@ -186,7 +186,7 @@ def load_overview_data(db_path: Path) -> dict[str, Any]:
                 conn,
                 """
                 SELECT SUM(CASE WHEN gross_total IS NOT NULL AND gross_total > 0 THEN 1 ELSE 0 END)
-                FROM inbox_invoice
+                FROM invoice_document
                 WHERE is_currently_present = 1
                 """,
             )
@@ -200,16 +200,16 @@ def load_overview_data(db_path: Path) -> dict[str, Any]:
             """
             SELECT AVG(gross_total) FROM (
                 SELECT gross_total
-                FROM inbox_invoice
+                FROM invoice_document
                 WHERE is_currently_present = 1
                   AND gross_total IS NOT NULL
                   AND gross_total > 0
                 ORDER BY gross_total
-                LIMIT 2 - (SELECT COUNT(*) FROM inbox_invoice
+                LIMIT 2 - (SELECT COUNT(*) FROM invoice_document
                            WHERE is_currently_present = 1
                              AND gross_total IS NOT NULL
                              AND gross_total > 0) % 2
-                OFFSET (SELECT (COUNT(*) - 1) / 2 FROM inbox_invoice
+                OFFSET (SELECT (COUNT(*) - 1) / 2 FROM invoice_document
                         WHERE is_currently_present = 1
                           AND gross_total IS NOT NULL
                           AND gross_total > 0)
@@ -229,7 +229,7 @@ def load_overview_data(db_path: Path) -> dict[str, Any]:
             conn,
             f"""
             SELECT SUM(gross_total)
-            FROM inbox_invoice
+            FROM invoice_document
             WHERE is_currently_present = 1
               AND ({rule.ready_predicate_sql})
               AND gross_total IS NOT NULL
@@ -243,7 +243,7 @@ def load_overview_data(db_path: Path) -> dict[str, Any]:
             conn,
             f"""
             SELECT SUM(gross_total)
-            FROM inbox_invoice
+            FROM invoice_document
             WHERE is_currently_present = 1
               AND ({rule.manual_predicate_sql})
               AND gross_total IS NOT NULL
@@ -257,7 +257,7 @@ def load_overview_data(db_path: Path) -> dict[str, Any]:
                 conn,
                 f"""
                 SELECT SUM(CASE WHEN gross_total IS NOT NULL AND gross_total > 0 THEN 1 ELSE 0 END)
-                FROM inbox_invoice
+                FROM invoice_document
                 WHERE is_currently_present = 1
                   AND ({rule.manual_predicate_sql})
                 """,
@@ -282,7 +282,7 @@ def load_overview_data(db_path: Path) -> dict[str, Any]:
                     conn,
                     """
                     SELECT COUNT(*)
-                    FROM inbox_invoice
+                    FROM invoice_document
                     WHERE is_currently_present = 1
                       AND po_match_status = 'NO_TEXT_LAYER'
                     """,
@@ -318,9 +318,9 @@ def load_overview_data(db_path: Path) -> dict[str, Any]:
 
 def load_status_breakdown_data(db_path: Path) -> list[dict[str, Any]]:
     with get_connection(db_path) as conn:
-        if not table_exists(conn, "inbox_invoice"):
+        if not table_exists(conn, "invoice_document"):
             return []
-        cols = get_table_columns(conn, "inbox_invoice")
+        cols = get_table_columns(conn, "invoice_document")
         if "po_match_status" not in cols:
             return []
 
@@ -331,7 +331,7 @@ def load_status_breakdown_data(db_path: Path) -> list[dict[str, Any]]:
                 po_match_status AS status,
                 COUNT(*) AS cnt,
                 SUM(CASE WHEN gross_total IS NOT NULL AND gross_total > 0 THEN gross_total ELSE 0 END) AS gross_pence
-            FROM inbox_invoice
+            FROM invoice_document
             WHERE is_currently_present = 1
             GROUP BY po_match_status
             ORDER BY cnt DESC, status ASC
@@ -342,9 +342,9 @@ def load_status_breakdown_data(db_path: Path) -> list[dict[str, Any]]:
 
 def load_ageing_buckets_data(db_path: Path) -> list[dict[str, Any]]:
     with get_connection(db_path) as conn:
-        if not table_exists(conn, "inbox_invoice"):
+        if not table_exists(conn, "invoice_document"):
             return []
-        cols = get_table_columns(conn, "inbox_invoice")
+        cols = get_table_columns(conn, "invoice_document")
         rule = build_readiness_rule(cols)
 
         rows = fetch_rows(
@@ -356,7 +356,7 @@ def load_ageing_buckets_data(db_path: Path) -> list[dict[str, Any]]:
                 gross_total,
                 CASE WHEN ({rule.ready_predicate_sql}) THEN 1 ELSE 0 END AS is_ready,
                 CAST((julianday('now') - julianday(first_seen_datetime)) AS INTEGER) AS age_days
-              FROM inbox_invoice
+              FROM invoice_document
               WHERE is_currently_present = 1
             ),
             bucketed AS (
@@ -392,57 +392,27 @@ def load_ageing_buckets_data(db_path: Path) -> list[dict[str, Any]]:
 
 
 def load_worklist_data(db_path: Path) -> list[dict[str, Any]]:
-    """
-    Reads the operational worklist from SQLite and returns rows suitable
-    for snapshot.json.
-
-    Includes Outlook identifiers so the dashboard can show "how to find this email".
-    """
+    """Read worklist rows from SQLite for inclusion in snapshot.json."""
     with get_connection(db_path) as conn:
         if not table_exists(conn, "invoice_worklist"):
             return []
 
-        cols = get_table_columns(conn, "invoice_worklist")
-
-        # Backwards compatible: if identity columns don't exist yet, return what we can.
-        has_identity = all(
-            c in cols for c in ("sender_domain", "email_subject", "attachment_name", "received_datetime")
+        rows = fetch_rows(
+            conn,
+            """
+            SELECT
+              document_hash,
+              file_name AS attachment_name,
+              scanned_datetime AS received_datetime,
+              next_action,
+              action_reason,
+              priority,
+              generated_at_utc,
+              is_currently_present
+            FROM invoice_worklist
+            ORDER BY priority ASC, document_hash ASC
+            """,
         )
-
-        if has_identity:
-            rows = fetch_rows(
-                conn,
-                """
-                SELECT
-                  document_hash,
-                  sender_domain,
-                  email_subject,
-                  attachment_name,
-                  received_datetime,
-                  next_action,
-                  action_reason,
-                  priority,
-                  generated_at_utc,
-                  is_currently_present
-                FROM invoice_worklist
-                ORDER BY priority ASC, document_hash ASC
-                """,
-            )
-        else:
-            rows = fetch_rows(
-                conn,
-                """
-                SELECT
-                  document_hash,
-                  next_action,
-                  action_reason,
-                  priority,
-                  generated_at_utc,
-                  is_currently_present
-                FROM invoice_worklist
-                ORDER BY priority ASC, document_hash ASC
-                """,
-            )
 
         return [dict(r) for r in rows]
 
@@ -460,12 +430,12 @@ def load_po_master_data(db_path: Path) -> list[dict[str, Any]]:
                 pm.po_status,
                 pm.approval_status,
                 pm.last_import_datetime,
-                COUNT(ii.document_hash) AS invoice_count,
-                SUM(CASE WHEN ii.gross_total IS NOT NULL AND ii.gross_total > 0
-                         THEN ii.gross_total ELSE 0 END) AS gross_total_pence
+                COUNT(id.document_hash) AS invoice_count,
+                SUM(CASE WHEN id.gross_total IS NOT NULL AND id.gross_total > 0
+                         THEN id.gross_total ELSE 0 END) AS gross_total_pence
             FROM po_master pm
             LEFT JOIN invoice_po ip ON pm.po_number = ip.po_number
-            LEFT JOIN inbox_invoice ii ON ip.document_hash = ii.document_hash
+            LEFT JOIN invoice_document id ON ip.document_hash = id.document_hash
             GROUP BY pm.po_number
             ORDER BY pm.po_number ASC
             """,
@@ -475,20 +445,20 @@ def load_po_master_data(db_path: Path) -> list[dict[str, Any]]:
 
 def load_invoices_data(db_path: Path) -> list[dict[str, Any]]:
     with get_connection(db_path) as conn:
-        if not table_exists(conn, "inbox_invoice"):
+        if not table_exists(conn, "invoice_document"):
             return []
         rows = fetch_rows(
             conn,
             """
             SELECT
                 document_hash,
-                attachment_file_name,
+                file_name AS attachment_file_name,
                 po_match_status,
                 gross_total,
                 first_seen_datetime,
                 processing_status,
                 is_currently_present
-            FROM inbox_invoice
+            FROM invoice_document
             ORDER BY first_seen_datetime DESC
             """,
         )

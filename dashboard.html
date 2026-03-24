@@ -488,9 +488,7 @@ select {
       <div class="muted">Counts are for invoices currently present. Values include only invoices where a gross total is available.</div>
       <div style="margin-top:10px; overflow:auto;">
         <table>
-          <thead>
-            <tr><th>Status</th><th>Count</th><th>Known total (£)</th></tr>
-          </thead>
+          <thead id="exc_head"></thead>
           <tbody id="exc_table"></tbody>
         </table>
       </div>
@@ -504,9 +502,7 @@ select {
       <div class="muted">Age is calculated from first seen datetime. Values include only invoices where a gross total is available.</div>
       <div style="margin-top:10px; overflow:auto;">
         <table>
-          <thead>
-            <tr><th>Age bucket</th><th>Ready count</th><th>Ready £</th><th>Manual count</th><th>Manual £</th></tr>
-          </thead>
+          <thead id="age_head"></thead>
           <tbody id="age_table"></tbody>
         </table>
       </div>
@@ -590,9 +586,7 @@ select {
         </div>
         <div style="overflow:auto;">
           <table>
-            <thead>
-              <tr><th>PO Number</th><th>Supplier Account</th><th>PO Status</th><th>Approval Status</th><th>Invoices</th><th>Gross Total</th><th>Imported</th></tr>
-            </thead>
+            <thead id="po_master_head"></thead>
             <tbody id="po_master_body"></tbody>
           </table>
         </div>
@@ -629,9 +623,7 @@ select {
         </div>
         <div style="overflow:auto;">
           <table>
-            <thead>
-              <tr><th>Filename</th><th>PO Number</th><th>PO Match Status</th><th>Gross Total</th><th>First Seen</th><th>Processing Status</th><th>Present</th></tr>
-            </thead>
+            <thead id="invoices_head"></thead>
             <tbody id="invoices_body"></tbody>
           </table>
         </div>
@@ -670,6 +662,62 @@ select {
   function shortHash(h) {
     if (!h) return "—";
     return String(h).slice(0, 10);
+  }
+
+  // ---- Generic sortable table helper ----
+  // Each table tracks its own sort state keyed by a table ID string.
+  const _tableSorts = {};
+
+  function getTableSort(tableId, defaultKey, defaultDir) {
+    if (!_tableSorts[tableId]) _tableSorts[tableId] = { key: defaultKey, dir: defaultDir || "asc" };
+    return _tableSorts[tableId];
+  }
+
+  function toggleTableSort(tableId, key, defaultDir) {
+    const s = getTableSort(tableId, key, defaultDir);
+    if (s.key === key) {
+      s.dir = s.dir === "asc" ? "desc" : "asc";
+    } else {
+      s.key = key;
+      s.dir = defaultDir || "asc";
+    }
+  }
+
+  function sortRows(rows, key, dir) {
+    return rows.slice().sort((a, b) => {
+      let va = a[key], vb = b[key];
+      // Try numeric comparison
+      const na = Number(va), nb = Number(vb);
+      if (!isNaN(na) && !isNaN(nb) && va !== "" && vb !== "" && va !== null && vb !== null) {
+        va = na; vb = nb;
+      } else {
+        va = String(va ?? "").toLowerCase();
+        vb = String(vb ?? "").toLowerCase();
+      }
+      const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+      return dir === "asc" ? cmp : -cmp;
+    });
+  }
+
+  function buildSortableHead(thead, columns, tableId, onSort) {
+    const s = _tableSorts[tableId] || {};
+    thead.innerHTML = "";
+    const tr = document.createElement("tr");
+    columns.forEach(col => {
+      const th = document.createElement("th");
+      th.style.cursor = "pointer";
+      th.style.userSelect = "none";
+      const isActive = s.key === col.key;
+      const arrow = isActive ? (s.dir === "asc" ? " ↑" : " ↓") : "";
+      th.textContent = col.label + arrow;
+      if (col.cls) th.className = col.cls;
+      th.addEventListener("click", () => {
+        toggleTableSort(tableId, col.key, col.defaultDir);
+        onSort();
+      });
+      tr.appendChild(th);
+    });
+    thead.appendChild(tr);
   }
 
   // ---- Worklist sorting state (persists across rerenders) ----
@@ -932,43 +980,68 @@ select {
       setText("exc_ready", String(m.ready_count));
       setText("exc_source", `Readiness rule: ${m.readiness_source}`);
 
-      const tbody = document.getElementById("exc_table");
-      tbody.innerHTML = "";
-      (data.status_breakdown || []).forEach(r => {
-        const tr = document.createElement("tr");
-        const tdStatus = document.createElement("td");
-        tdStatus.textContent = r.status ?? "—";
-        const tdCnt = document.createElement("td");
-        tdCnt.textContent = r.cnt ?? 0;
-        const tdGross = document.createElement("td");
-        tdGross.textContent = gbp(r.gross_pence);
-        tr.appendChild(tdStatus);
-        tr.appendChild(tdCnt);
-        tr.appendChild(tdGross);
-        tbody.appendChild(tr);
-      });
+      window._excData = data.status_breakdown || [];
+      getTableSort("exc", "cnt", "desc");
+      renderExcTable();
 
-      // Ageing
-      const ageTbody = document.getElementById("age_table");
-      ageTbody.innerHTML = "";
-      const buckets = (data.ageing_buckets || []);
-      const order = ["0-1 days","2-3 days","4-7 days","8-14 days","15+ days"];
-      const map = {};
-      buckets.forEach(r => {
-        map[r.age_bucket] = map[r.age_bucket] || {};
-        map[r.age_bucket][r.lane] = r;
-      });
-      order.forEach(b => {
-        const ready = (map[b] && map[b]["Ready"]) || {cnt:0, gross_pence:0};
-        const manual = (map[b] && map[b]["Manual"]) || {cnt:0, gross_pence:0};
-        const tr = document.createElement("tr");
-        [b, ready.cnt ?? 0, gbp(ready.gross_pence), manual.cnt ?? 0, gbp(manual.gross_pence)].forEach(val => {
-          const td = document.createElement("td");
-          td.textContent = val;
-          tr.appendChild(td);
+      function renderExcTable() {
+        const excCols = [
+          { key: "status", label: "Status" },
+          { key: "cnt", label: "Count", defaultDir: "desc" },
+          { key: "gross_pence", label: "Known Total (£)", defaultDir: "desc" }
+        ];
+        buildSortableHead(document.getElementById("exc_head"), excCols, "exc", renderExcTable);
+        const s = getTableSort("exc", "cnt", "desc");
+        const sorted = sortRows(window._excData, s.key, s.dir);
+        const tbody = document.getElementById("exc_table");
+        tbody.innerHTML = "";
+        sorted.forEach(r => {
+          const tr = document.createElement("tr");
+          [r.status ?? "—", r.cnt ?? 0, gbp(r.gross_pence)].forEach(val => {
+            const td = document.createElement("td");
+            td.textContent = val;
+            tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
         });
-        ageTbody.appendChild(tr);
+      }
+
+      // Ageing — flatten into sortable rows
+      const buckets = (data.ageing_buckets || []);
+      const ageOrder = ["0-1 days","2-3 days","4-7 days","8-14 days","15+ days"];
+      const ageMap = {};
+      buckets.forEach(r => { ageMap[r.age_bucket] = ageMap[r.age_bucket] || {}; ageMap[r.age_bucket][r.lane] = r; });
+      window._ageData = ageOrder.map(b => {
+        const ready = (ageMap[b] && ageMap[b]["Ready"]) || {cnt:0, gross_pence:0};
+        const manual = (ageMap[b] && ageMap[b]["Manual"]) || {cnt:0, gross_pence:0};
+        return { age_bucket: b, ready_cnt: ready.cnt ?? 0, ready_gross: ready.gross_pence ?? 0, manual_cnt: manual.cnt ?? 0, manual_gross: manual.gross_pence ?? 0 };
       });
+      getTableSort("age", "age_bucket", "asc");
+      renderAgeTable();
+
+      function renderAgeTable() {
+        const ageCols = [
+          { key: "age_bucket", label: "Age Bucket" },
+          { key: "ready_cnt", label: "Ready Count", defaultDir: "desc" },
+          { key: "ready_gross", label: "Ready £", defaultDir: "desc" },
+          { key: "manual_cnt", label: "Manual Count", defaultDir: "desc" },
+          { key: "manual_gross", label: "Manual £", defaultDir: "desc" }
+        ];
+        buildSortableHead(document.getElementById("age_head"), ageCols, "age", renderAgeTable);
+        const s = getTableSort("age", "age_bucket", "asc");
+        const sorted = sortRows(window._ageData, s.key, s.dir);
+        const ageTbody = document.getElementById("age_table");
+        ageTbody.innerHTML = "";
+        sorted.forEach(r => {
+          const tr = document.createElement("tr");
+          [r.age_bucket, r.ready_cnt, gbp(r.ready_gross), r.manual_cnt, gbp(r.manual_gross)].forEach(val => {
+            const td = document.createElement("td");
+            td.textContent = val;
+            tr.appendChild(td);
+          });
+          ageTbody.appendChild(tr);
+        });
+      }
 
       // Worklist (uses current snapshot, sortable in-browser)
       renderWorklist(data);
@@ -1048,6 +1121,16 @@ select {
     filterPoMaster();
   }
 
+  const _poMasterCols = [
+    { key: "po_number", label: "PO Number" },
+    { key: "supplier_account", label: "Supplier Account" },
+    { key: "po_status", label: "PO Status" },
+    { key: "approval_status", label: "Approval Status" },
+    { key: "invoice_count", label: "Invoices", defaultDir: "desc" },
+    { key: "gross_total_pence", label: "Gross Total", defaultDir: "desc" },
+    { key: "last_import_datetime", label: "Imported" }
+  ];
+
   function filterPoMaster() {
     const q = (document.getElementById("po_master_filter").value || "").toLowerCase();
 
@@ -1064,13 +1147,19 @@ select {
   }
 
   function renderPoMasterPage() {
+    getTableSort("po_master", "po_number", "asc");
+    buildSortableHead(document.getElementById("po_master_head"), _poMasterCols, "po_master", renderPoMasterPage);
+
+    const s = getTableSort("po_master", "po_number", "asc");
+    const sorted = sortRows(_poMasterFiltered, s.key, s.dir);
+
     const pageSize = parseInt(document.getElementById("po_master_page_size").value, 10);
-    const totalPages = Math.max(1, Math.ceil(_poMasterFiltered.length / pageSize));
+    const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
     if (_poMasterPage >= totalPages) _poMasterPage = totalPages - 1;
     if (_poMasterPage < 0) _poMasterPage = 0;
 
     const start = _poMasterPage * pageSize;
-    const page = _poMasterFiltered.slice(start, start + pageSize);
+    const page = sorted.slice(start, start + pageSize);
 
     const body = document.getElementById("po_master_body");
     body.innerHTML = "";
@@ -1142,14 +1231,30 @@ select {
     renderInvoicesPage();
   }
 
+  const _invoicesCols = [
+    { key: "attachment_file_name", label: "Filename" },
+    { key: "po_number", label: "PO Number" },
+    { key: "po_match_status", label: "PO Match Status" },
+    { key: "gross_total", label: "Gross Total", defaultDir: "desc" },
+    { key: "first_seen_datetime", label: "First Seen", defaultDir: "desc" },
+    { key: "processing_status", label: "Processing Status" },
+    { key: "is_currently_present", label: "Present", defaultDir: "desc" }
+  ];
+
   function renderInvoicesPage() {
+    getTableSort("invoices", "first_seen_datetime", "desc");
+    buildSortableHead(document.getElementById("invoices_head"), _invoicesCols, "invoices", renderInvoicesPage);
+
+    const s = getTableSort("invoices", "first_seen_datetime", "desc");
+    const sorted = sortRows(_invoicesFiltered, s.key, s.dir);
+
     const pageSize = parseInt(document.getElementById("invoices_page_size").value, 10);
-    const totalPages = Math.max(1, Math.ceil(_invoicesFiltered.length / pageSize));
+    const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
     if (_invoicesPage >= totalPages) _invoicesPage = totalPages - 1;
     if (_invoicesPage < 0) _invoicesPage = 0;
 
     const start = _invoicesPage * pageSize;
-    const page = _invoicesFiltered.slice(start, start + pageSize);
+    const page = sorted.slice(start, start + pageSize);
 
     const body = document.getElementById("invoices_body");
     body.innerHTML = "";

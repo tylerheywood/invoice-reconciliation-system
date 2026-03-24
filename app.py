@@ -11,6 +11,7 @@ from flask import Flask, jsonify, request, send_file, send_from_directory
 from core.load_po_master import load_po_master
 from core.snapshot import write_snapshot
 from core.db import get_connection
+from core.worklist import refresh_worklist_tables
 
 ROOT = Path(__file__).resolve().parent
 EXPORTS_DIR = ROOT / "exports"
@@ -99,6 +100,11 @@ def mark_posted():
         conn.close()
 
     try:
+        conn = get_connection()
+        try:
+            refresh_worklist_tables(conn)
+        finally:
+            conn.close()
         write_snapshot()
     except Exception:
         app.logger.exception("Snapshot refresh failed after mark-posted")
@@ -134,6 +140,11 @@ def add_note():
         conn.close()
 
     try:
+        conn = get_connection()
+        try:
+            refresh_worklist_tables(conn)
+        finally:
+            conn.close()
         write_snapshot()
     except Exception:
         app.logger.exception("Snapshot refresh failed after add-note")

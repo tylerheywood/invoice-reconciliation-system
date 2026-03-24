@@ -404,6 +404,7 @@ def load_worklist_data(db_path: Path) -> list[dict[str, Any]]:
               document_hash,
               file_name AS attachment_name,
               scanned_datetime AS received_datetime,
+              review_note,
               next_action,
               action_reason,
               priority,

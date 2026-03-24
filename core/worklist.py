@@ -37,6 +37,7 @@ class WorkItem:
     document_hash: str
     file_name: str | None
     scanned_datetime: str | None
+    review_note: str | None
     next_action: str
     action_reason: str
     priority: int
@@ -76,6 +77,8 @@ def build_worklist(
             id.vat_total,
             id.gross_total,
             id.file_name        AS file_name,
+            id.review_note,
+            id.posted_datetime,
             COALESCE(id.duplicate_suspect, 0) AS duplicate_suspect,
             if2.scanned_datetime AS scanned_datetime
         FROM invoice_document id
@@ -86,6 +89,10 @@ def build_worklist(
 
     items: List[WorkItem] = []
     for r in rows:
+        # Posted invoices are terminal — exclude from worklist
+        if r["posted_datetime"] is not None:
+            continue
+
         next_action, action_reason, priority = _classify_invoice(r)
 
         if not include_ready_to_post and next_action == "READY TO POST":
@@ -96,6 +103,7 @@ def build_worklist(
                 document_hash=r["document_hash"],
                 file_name=r["file_name"],
                 scanned_datetime=r["scanned_datetime"],
+                review_note=r["review_note"],
                 next_action=next_action,
                 action_reason=action_reason,
                 priority=priority,
@@ -127,12 +135,12 @@ def refresh_worklist_tables(
         conn.executemany(
             """
             INSERT INTO invoice_worklist (
-                document_hash, file_name, scanned_datetime,
+                document_hash, file_name, scanned_datetime, review_note,
                 next_action, action_reason, priority,
                 generated_at_utc, is_currently_present
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
             """,
-            [(i.document_hash, i.file_name, i.scanned_datetime,
+            [(i.document_hash, i.file_name, i.scanned_datetime, i.review_note,
               i.next_action, i.action_reason, i.priority,
               i.generated_at_utc, i.is_currently_present) for i in items],
         )
@@ -140,12 +148,12 @@ def refresh_worklist_tables(
         conn.executemany(
             """
             INSERT INTO invoice_worklist_history (
-                run_id, document_hash, file_name, scanned_datetime,
+                run_id, document_hash, file_name, scanned_datetime, review_note,
                 next_action, action_reason, priority,
                 generated_at_utc, is_currently_present
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
             """,
-            [(run_id, i.document_hash, i.file_name, i.scanned_datetime,
+            [(run_id, i.document_hash, i.file_name, i.scanned_datetime, i.review_note,
               i.next_action, i.action_reason, i.priority,
               i.generated_at_utc, i.is_currently_present) for i in items],
         )
@@ -159,7 +167,7 @@ def refresh_worklist_tables(
 def fetch_current_worklist(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     """Return current worklist rows as dicts."""
     rows = conn.execute("""
-        SELECT document_hash, file_name, scanned_datetime,
+        SELECT document_hash, file_name, scanned_datetime, review_note,
                next_action, action_reason, priority,
                generated_at_utc, is_currently_present
         FROM invoice_worklist

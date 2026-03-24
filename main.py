@@ -9,6 +9,7 @@ validation, and value extraction. Outputs a snapshot for the dashboard.
 
 import argparse
 import time
+import traceback
 from datetime import datetime, timezone
 import os
 import sys
@@ -22,14 +23,6 @@ if _ENV_DEBUG in ("1", "true", "yes", "y", "on"):
 def dprint(*args, **kwargs) -> None:
     if DEBUG:
         print(*args, **kwargs)
-
-# Guard against stale database from a previous schema version
-_OLD_DB = Path(__file__).resolve().parent / "inbox.db"
-if _OLD_DB.exists():
-    print("[WARNING] inbox.db detected from a previous version. The schema has changed.")
-    print("Delete inbox.db and re-run the pipeline to initialise the new schema.")
-    print("Exiting.")
-    sys.exit(1)
 
 from core.folder_scanner import scan_folder_to_db
 from core.po_validation import run_po_validation
@@ -58,6 +51,14 @@ def print_tables() -> None:
 
 
 def main() -> None:
+    # Guard against stale database from a previous schema version
+    old_db = Path(__file__).resolve().parent / "inbox.db"
+    if old_db.exists():
+        print("[WARNING] inbox.db detected from a previous version. The schema has changed.")
+        print("Delete inbox.db and re-run the pipeline to initialise the new schema.")
+        print("Exiting.")
+        sys.exit(1)
+
     print(f"[BOOT] {datetime.now(timezone.utc).isoformat()} main starting", flush=True)
     print("=== Invoice Reconciliation System — Pipeline Run ===")
     dprint("[DEBUG] Enabled via ICS_DEBUG=1")
@@ -156,6 +157,7 @@ if __name__ == "__main__":
                 main()
             except Exception as e:
                 print(f"[WATCH] Pipeline error: {e}", flush=True)
+                traceback.print_exc()
             print(f"[WATCH] Next run in {args.interval}s...", flush=True)
             time.sleep(args.interval)
     else:

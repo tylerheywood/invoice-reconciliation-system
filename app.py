@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file, send_from_directory
@@ -78,14 +80,14 @@ STAGING_DIR = ROOT / "staging"
 def mark_posted():
     """Mark an invoice as posted. Sets posted_datetime and refreshes the snapshot."""
     data = request.get_json(silent=True) or {}
-    doc_hash = data.get("document_hash")
-    if not doc_hash:
-        return jsonify({"ok": False, "error": "document_hash required"}), 400
+    doc_hash = data.get("document_hash", "")
+    if not doc_hash or not re.fullmatch(r"[0-9a-f]{64}", doc_hash):
+        return jsonify({"ok": False, "error": "document_hash must be a 64-character hex string"}), 400
+
+    now = datetime.now(timezone.utc).isoformat()
 
     conn = get_connection()
     try:
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc).isoformat()
         cur = conn.execute(
             "UPDATE invoice_document SET posted_datetime = ?, processing_status = 'POSTED' WHERE document_hash = ?",
             (now, doc_hash),
@@ -108,17 +110,19 @@ def mark_posted():
 def add_note():
     """Add a review note to an invoice."""
     data = request.get_json(silent=True) or {}
-    doc_hash = data.get("document_hash")
+    doc_hash = data.get("document_hash", "")
     note = data.get("note", "").strip()
-    if not doc_hash:
-        return jsonify({"ok": False, "error": "document_hash required"}), 400
+    if not doc_hash or not re.fullmatch(r"[0-9a-f]{64}", doc_hash):
+        return jsonify({"ok": False, "error": "document_hash must be a 64-character hex string"}), 400
     if not note:
         return jsonify({"ok": False, "error": "note required"}), 400
+    if len(note) > 2000:
+        return jsonify({"ok": False, "error": "note must not exceed 2000 characters"}), 400
+
+    now = datetime.now(timezone.utc).isoformat()
 
     conn = get_connection()
     try:
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc).isoformat()
         cur = conn.execute(
             "UPDATE invoice_document SET review_note = ?, reviewed_datetime = ?, review_outcome = 'REVIEWED' WHERE document_hash = ?",
             (note, now, doc_hash),
@@ -139,14 +143,25 @@ def add_note():
 
 @app.route("/api/pdf/<doc_hash>")
 def serve_pdf(doc_hash):
-    """Serve a staged PDF by its document hash prefix."""
-    if not doc_hash or len(doc_hash) < 10:
+    """Serve a staged PDF by its document hash, validated against the database."""
+    if not doc_hash or not doc_hash.isalnum():
         return jsonify({"error": "Invalid hash"}), 400
 
-    # Find the staged file by hash prefix
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM invoice_document WHERE document_hash = ? LIMIT 1",
+            (doc_hash,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        return jsonify({"error": "Invoice not found"}), 404
+
     matches = sorted(STAGING_DIR.glob(f"{doc_hash[:12]}_*"))
     if not matches:
-        return jsonify({"error": "PDF not found in staging"}), 404
+        return jsonify({"error": "PDF file missing from staging despite database record existing"}), 404
 
     return send_file(matches[0], mimetype="application/pdf")
 

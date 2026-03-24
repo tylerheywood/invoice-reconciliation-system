@@ -85,21 +85,21 @@ class PoPattern:
 
 
 _DASH_CHARS = r"\-\u2010-\u2015"
-_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "po_patterns.json"
-
-# Loaded from config; defaults used if config missing
-_PO_PREFIX = "QAHE-PO-"
-_PO_DIGIT_LENGTH = 6
+_CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
+_CONFIG_PATH = _CONFIG_DIR / "po_patterns.json"
+_CONFIG_EXAMPLE_PATH = _CONFIG_DIR / "po_patterns.example.json"
 
 
 def _load_config() -> dict | None:
     """Load PO pattern config from JSON file. Returns None if not found."""
-    if _CONFIG_PATH.exists():
-        try:
-            with _CONFIG_PATH.open("r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return None
+    for path in (_CONFIG_PATH, _CONFIG_EXAMPLE_PATH):
+        if path.exists():
+            try:
+                with path.open("r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"[WARN] {path.name} exists but failed to parse: {e}. Falling back to next candidate.")
+                continue
     return None
 
 

@@ -451,15 +451,18 @@ def load_invoices_data(db_path: Path) -> list[dict[str, Any]]:
             conn,
             """
             SELECT
-                document_hash,
-                file_name AS attachment_file_name,
-                po_match_status,
-                gross_total,
-                first_seen_datetime,
-                processing_status,
-                is_currently_present
-            FROM invoice_document
-            ORDER BY first_seen_datetime DESC
+                id.document_hash,
+                id.file_name AS attachment_file_name,
+                id.po_match_status,
+                GROUP_CONCAT(ip.po_number, ', ') AS po_number,
+                id.gross_total,
+                id.first_seen_datetime,
+                id.processing_status,
+                id.is_currently_present
+            FROM invoice_document id
+            LEFT JOIN invoice_po ip ON id.document_hash = ip.document_hash
+            GROUP BY id.document_hash
+            ORDER BY id.first_seen_datetime DESC
             """,
         )
         return [dict(r) for r in rows]

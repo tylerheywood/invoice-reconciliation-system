@@ -18,5 +18,6 @@ data/
 logs/
 exports/
 .venv/
+config/po_patterns.json
 run_main.local.ps1
 task_main.log

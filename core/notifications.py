@@ -9,12 +9,19 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.parse
 import urllib.request
 import urllib.error
 from typing import Any
 
 
-WEBHOOK_URL = os.getenv("IRS_WEBHOOK_URL", "").strip()
+def _sanitise_url_for_logging(url: str) -> str:
+    """Strip userinfo (credentials) from a URL before logging."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.username or parsed.password:
+        safe = parsed._replace(netloc=f"***@{parsed.hostname}" + (f":{parsed.port}" if parsed.port else ""))
+        return urllib.parse.urlunparse(safe)
+    return url
 
 
 def notify_new_exceptions(worklist_items: list[dict[str, Any]], previous_hashes: set[str]) -> int:
@@ -23,7 +30,12 @@ def notify_new_exceptions(worklist_items: list[dict[str, Any]], previous_hashes:
 
     Returns the number of notifications sent (0 if webhook not configured).
     """
-    if not WEBHOOK_URL:
+    webhook_url = os.getenv("IRS_WEBHOOK_URL", "").strip()
+    if not webhook_url:
+        return 0
+
+    if not webhook_url.startswith("http://") and not webhook_url.startswith("https://"):
+        print(f"[WEBHOOK] Invalid URL scheme (must be http or https): {_sanitise_url_for_logging(webhook_url)}")
         return 0
 
     new_items = [
@@ -43,7 +55,6 @@ def notify_new_exceptions(worklist_items: list[dict[str, Any]], previous_hashes:
                 "document_hash": item.get("document_hash"),
                 "file_name": item.get("file_name") or item.get("attachment_name"),
                 "action_reason": item.get("action_reason"),
-                "priority": item.get("priority"),
             }
             for item in new_items
         ],
@@ -51,7 +62,7 @@ def notify_new_exceptions(worklist_items: list[dict[str, Any]], previous_hashes:
 
     try:
         req = urllib.request.Request(
-            WEBHOOK_URL,
+            webhook_url,
             data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -60,5 +71,5 @@ def notify_new_exceptions(worklist_items: list[dict[str, Any]], previous_hashes:
             resp.read()
         return len(new_items)
     except (urllib.error.URLError, OSError) as e:
-        print(f"[WEBHOOK] Failed to send notification: {e}")
+        print(f"[WEBHOOK] Failed to send notification to {_sanitise_url_for_logging(webhook_url)}: {e}")
         return 0

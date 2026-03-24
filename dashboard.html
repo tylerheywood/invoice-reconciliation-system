@@ -630,7 +630,7 @@ select {
         <div style="overflow:auto;">
           <table>
             <thead>
-              <tr><th>Filename</th><th>PO Match Status</th><th>Gross Total</th><th>First Seen</th><th>Processing Status</th><th>Present</th></tr>
+              <tr><th>Filename</th><th>PO Number</th><th>PO Match Status</th><th>Gross Total</th><th>First Seen</th><th>Processing Status</th><th>Present</th></tr>
             </thead>
             <tbody id="invoices_body"></tbody>
           </table>
@@ -846,7 +846,7 @@ select {
           pdfBtn.className = "action-btn";
           pdfBtn.textContent = "PDF";
           pdfBtn.title = "Download invoice PDF";
-          pdfBtn.addEventListener("click", () => { window.open(`/api/pdf/${hash}`, "_blank"); });
+          pdfBtn.addEventListener("click", () => { window.open(`/api/pdf/${encodeURIComponent(hash)}`, "_blank"); });
           td.appendChild(pdfBtn);
 
           const noteBtn = document.createElement("button");
@@ -857,7 +857,9 @@ select {
             const note = prompt("Add a review note for this invoice:");
             if (note) {
               fetch("/api/add-note", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({document_hash: hash, note: note}) })
-                .then(r => r.json()).then(d => { if (d.ok) loadSnapshot(); else alert(d.error || "Failed"); });
+                .then(r => { if (!r.ok) throw new Error(`Server error ${r.status}`); return r.json(); })
+                .then(d => { if (d.ok) loadSnapshot(); else alert(d.error || "Failed"); })
+                .catch(err => alert("Note failed: " + err.message));
             }
           });
           td.appendChild(noteBtn);
@@ -869,7 +871,9 @@ select {
           postBtn.addEventListener("click", () => {
             if (confirm("Mark this invoice as posted?")) {
               fetch("/api/mark-posted", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({document_hash: hash}) })
-                .then(r => r.json()).then(d => { if (d.ok) loadSnapshot(); else alert(d.error || "Failed"); });
+                .then(r => { if (!r.ok) throw new Error(`Server error ${r.status}`); return r.json(); })
+                .then(d => { if (d.ok) loadSnapshot(); else alert(d.error || "Failed"); })
+                .catch(err => alert("Mark posted failed: " + err.message));
             }
           });
           td.appendChild(postBtn);
@@ -886,8 +890,13 @@ select {
     });
   }
 
+  let _loading = false;
+
   async function loadSnapshot() {
+    if (_loading) return;
+    _loading = true;
     try {
+      document.getElementById("error").style.display = "none";
       const res = await fetch("/snapshot.json", { cache: "no-store" });
       if (!res.ok) throw new Error("Failed to load snapshot.json (" + res.status + ")");
       const data = await res.json();
@@ -1004,6 +1013,8 @@ select {
       const el = document.getElementById("error");
       el.style.display = "block";
       el.textContent = "Error: " + e.message;
+    } finally {
+      _loading = false;
     }
   }
 
@@ -1120,6 +1131,7 @@ select {
     _invoicesFiltered = _invoicesData.filter(r => {
       if (!q) return true;
       return (r.attachment_file_name || "").toLowerCase().includes(q)
+          || (r.po_number || "").toLowerCase().includes(q)
           || (r.po_match_status || "").toLowerCase().includes(q)
           || (r.processing_status || "").toLowerCase().includes(q)
           || gbp(r.gross_total).replace(/,/g, "").toLowerCase().includes(q);
@@ -1147,6 +1159,7 @@ select {
       const present = Number(r.is_currently_present ?? 0) === 1 ? "Yes" : "No";
       const vals = [
         r.attachment_file_name,
+        r.po_number,
         r.po_match_status,
         gbp(r.gross_total),
         fmtIso(r.first_seen_datetime),
@@ -1302,12 +1315,12 @@ select {
 
   document.getElementById("invoices_export").addEventListener("click", () => {
     const rows = _invoicesFiltered.map(r => [
-      r.attachment_file_name, r.po_match_status,
+      r.attachment_file_name, r.po_number || "",  r.po_match_status,
       r.gross_total ? (Number(r.gross_total)/100).toFixed(2) : "",
       r.first_seen_datetime, r.processing_status,
       Number(r.is_currently_present ?? 0) === 1 ? "Yes" : "No"
     ]);
-    downloadCsv("invoices.csv", ["Filename","PO Match Status","Gross Total","First Seen","Processing Status","Present"], rows);
+    downloadCsv("invoices.csv", ["Filename","PO Number","PO Match Status","Gross Total","First Seen","Processing Status","Present"], rows);
   });
 </script>
 </body>

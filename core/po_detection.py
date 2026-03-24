@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -83,57 +84,84 @@ class PoPattern:
     allow: Optional[Callable[[str, re.Match], bool]] = None
 
 
-# Treat hyphen-like unicode dashes as hyphens in patterns.
-_DASH_CHARS = r"\-\u2010-\u2015"  # -, ‐-‒–—―
+_DASH_CHARS = r"\-\u2010-\u2015"
+_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "po_patterns.json"
 
-# Canonical token: strictly 6 digits everywhere
-PO_DIGITS = r"([0-9]{6})"
-
-
-def normalize_qahe_po_digits(digits: str) -> str:
-    """Normalise extracted digits to the canonical PO format used in po_master."""
-    cleaned = re.sub(r"\D+", "", digits)
-    if len(cleaned) != 6:
-        raise ValueError(f"Invalid PO digits: {digits!r}")
-    return f"QAHE-PO-{cleaned}"
+# Loaded from config; defaults used if config missing
+_PO_PREFIX = "QAHE-PO-"
+_PO_DIGIT_LENGTH = 6
 
 
-def allow_bare_po_match(text: str, match: re.Match) -> bool:
-    """Prevent the bare PO matcher from double-matching inside a full-prefix PO string."""
-    start = match.start()
-    if start == 0:
-        return True
+def _load_config() -> dict | None:
+    """Load PO pattern config from JSON file. Returns None if not found."""
+    if _CONFIG_PATH.exists():
+        try:
+            with _CONFIG_PATH.open("r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return None
+    return None
 
-    window = text[max(0, start - 16) : start]
-    collapsed = re.sub(rf"[\s{_DASH_CHARS}]+", "", window).upper()
-    return not collapsed.endswith("QAHE")
 
+def _init_patterns() -> tuple[str, int, List[PoPattern]]:
+    """Build pattern list from config file, falling back to hardcoded defaults."""
+    cfg = _load_config()
 
-PO_PATTERNS: List[PoPattern] = [
-    PoPattern(
-        re.compile(
-            rf"\bQAHE\s*[{_DASH_CHARS}]\s*PO\s*[{_DASH_CHARS}]\s*{PO_DIGITS}\b",
-            re.IGNORECASE,
+    prefix = cfg.get("prefix", "QAHE-PO-") if cfg else "QAHE-PO-"
+    digit_length = cfg.get("digit_length", 6) if cfg else 6
+    po_digits = rf"([0-9]{{{digit_length}}})"
+
+    def normalizer(digits: str) -> str:
+        cleaned = re.sub(r"\D+", "", digits)
+        if len(cleaned) != digit_length:
+            raise ValueError(f"Invalid PO digits: {digits!r}")
+        return f"{prefix}{cleaned}"
+
+    def allow_bare_po_match(text: str, match: re.Match) -> bool:
+        """Prevent double-matching inside a full-prefix PO string."""
+        start = match.start()
+        if start == 0:
+            return True
+        window = text[max(0, start - 16) : start]
+        collapsed = re.sub(rf"[\s{_DASH_CHARS}]+", "", window).upper()
+        prefix_stem = prefix.rstrip("-").replace("-", "")
+        return not collapsed.endswith(prefix_stem)
+
+    if cfg and "patterns" in cfg:
+        patterns = []
+        for p in cfg["patterns"]:
+            flags = re.IGNORECASE if p.get("case_insensitive") else 0
+            allow = allow_bare_po_match if p.get("guard") == "no_prefix_overlap" else None
+            patterns.append(PoPattern(
+                regex=re.compile(p["regex"], flags),
+                normalizer=lambda m, _n=normalizer: _n(m.group(1)),
+                allow=allow,
+            ))
+        return prefix, digit_length, patterns
+
+    # Hardcoded fallback
+    return prefix, digit_length, [
+        PoPattern(
+            re.compile(rf"\bQAHE\s*[{_DASH_CHARS}]\s*PO\s*[{_DASH_CHARS}]\s*{po_digits}\b", re.IGNORECASE),
+            lambda m, _n=normalizer: _n(m.group(1)),
         ),
-        lambda m: normalize_qahe_po_digits(m.group(1)),
-    ),
-    PoPattern(
-        re.compile(
-            rf"\bPurchase\s*Order\s*[:#]?\s*(?:PO\s*[{_DASH_CHARS}]\s*)?{PO_DIGITS}\b",
-            re.IGNORECASE,
+        PoPattern(
+            re.compile(rf"\bPurchase\s*Order\s*[:#]?\s*(?:PO\s*[{_DASH_CHARS}]\s*)?{po_digits}\b", re.IGNORECASE),
+            lambda m, _n=normalizer: _n(m.group(1)),
         ),
-        lambda m: normalize_qahe_po_digits(m.group(1)),
-    ),
-    PoPattern(
-        re.compile(rf"\bPO\s*#?\s*:\s*{PO_DIGITS}\b", re.IGNORECASE),
-        lambda m: normalize_qahe_po_digits(m.group(1)),
-    ),
-    PoPattern(
-        re.compile(rf"\bPO\s*[{_DASH_CHARS}]\s*{PO_DIGITS}\b", re.IGNORECASE),
-        lambda m: normalize_qahe_po_digits(m.group(1)),
-        allow=allow_bare_po_match,
-    ),
-]
+        PoPattern(
+            re.compile(rf"\bPO\s*#?\s*:\s*{po_digits}\b", re.IGNORECASE),
+            lambda m, _n=normalizer: _n(m.group(1)),
+        ),
+        PoPattern(
+            re.compile(rf"\bPO\s*[{_DASH_CHARS}]\s*{po_digits}\b", re.IGNORECASE),
+            lambda m, _n=normalizer: _n(m.group(1)),
+            allow=allow_bare_po_match,
+        ),
+    ]
+
+
+_PO_PREFIX, _PO_DIGIT_LENGTH, PO_PATTERNS = _init_patterns()
 
 
 def extract_text_from_pdf(pdf_path: Path) -> str:

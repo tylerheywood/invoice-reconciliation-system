@@ -76,6 +76,7 @@ def build_worklist(
             id.vat_total,
             id.gross_total,
             id.file_name        AS file_name,
+            COALESCE(id.duplicate_suspect, 0) AS duplicate_suspect,
             if2.scanned_datetime AS scanned_datetime
         FROM invoice_document id
         LEFT JOIN invoice_file if2 ON if2.file_id = id.file_id
@@ -224,6 +225,12 @@ def _classify_invoice(row: sqlite3.Row) -> Tuple[str, str, int]:
             return ("MANUAL REVIEW", "PO NOT CONFIRMED", 20)
         if po_validation_status not in (STATUS_UNVALIDATED, STATUS_PO_NOT_IN_MASTER, STATUS_PO_NOT_OPEN, STATUS_VALID_PO):
             return ("MANUAL REVIEW", "UNKNOWN PO VALIDATION STATUS", 65)
+
+    # Duplicate suspect gets flagged but doesn't block posting
+    duplicate_suspect = int(row["duplicate_suspect"]) if row["duplicate_suspect"] is not None else 0
+
+    if ready_to_post == 1 and duplicate_suspect == 1:
+        return ("MANUAL REVIEW", "POSSIBLE DUPLICATE", 15)
 
     if ready_to_post == 1:
         return ("READY TO POST", "VALID PO", 80)

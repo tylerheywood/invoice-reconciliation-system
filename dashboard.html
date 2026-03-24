@@ -343,13 +343,74 @@ select {
 .accordion-body.collapsed {
   display: none;
 }
+
+/* Action buttons */
+.action-btn {
+  background: #020617;
+  color: var(--text-soft);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+  font-size: 11px;
+  margin-right: 4px;
+}
+.action-btn:hover { background: var(--bg-hover); }
+.action-btn.posted { color: var(--accent); border-color: var(--accent); }
+
+/* Auto-refresh indicator */
+.refresh-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.refresh-btn {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-soft);
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.refresh-btn:hover { border-color: var(--text-soft); }
+
+/* CSV export */
+.export-btn {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-soft);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.export-btn:hover { border-color: var(--text-soft); }
+
+/* Filter input consistent style */
+.filter-input {
+  background: #020617;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-main);
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
   </style>
 </head>
 
 <body>
   <div class="topbar">
-    <div class="title">AP Invoice Reconciliation System</div>
-    <div class="meta" id="meta">Loading…</div>
+    <div class="title">Invoice Reconciliation System</div>
+    <div style="display:flex;align-items:center;gap:16px;">
+      <div class="meta" id="meta">Loading...</div>
+      <div class="refresh-bar">
+        <span id="refresh_status"></span>
+        <button class="refresh-btn" id="refresh_btn" title="Refresh now">Refresh</button>
+      </div>
+    </div>
   </div>
 
   <div class="upload-bar">
@@ -460,12 +521,17 @@ select {
 
       <div class="controls">
         <div class="control">
+          <label for="wl_filter" class="small">Filter</label>
+          <input id="wl_filter" type="text" placeholder="Search worklist..." class="filter-input" />
+        </div>
+
+        <div class="control">
           <label for="wl_present_only" class="small">Present only</label>
           <input id="wl_present_only" type="checkbox" checked />
         </div>
 
         <div class="control">
-          <label for="wl_min_priority" class="small">Min priority</label>
+          <label for="wl_min_priority" class="small">Min score</label>
           <select id="wl_min_priority">
             <option value="0">0+</option>
             <option value="1">1+</option>
@@ -476,6 +542,7 @@ select {
         </div>
 
         <div class="muted small" id="wl_count">—</div>
+        <button class="export-btn" id="wl_export">Export CSV</button>
         <div class="muted small" id="wl_sort_label" style="margin-left:auto;">Sort: Priority ↓</div>
       </div>
 
@@ -519,6 +586,7 @@ select {
             <input id="po_master_filter" type="text" placeholder="PO number or supplier…" style="background:#020617;border:1px solid var(--border-subtle);color:var(--text-main);border-radius:10px;padding:6px 10px;font-size:13px;" />
           </div>
           <div class="muted small" id="po_master_count">—</div>
+          <button class="export-btn" id="po_master_export">Export CSV</button>
         </div>
         <div style="overflow:auto;">
           <table>
@@ -557,6 +625,7 @@ select {
             <input id="invoices_filter" type="text" placeholder="Filename or PO status…" style="background:#020617;border:1px solid var(--border-subtle);color:var(--text-main);border-radius:10px;padding:6px 10px;font-size:13px;" />
           </div>
           <div class="muted small" id="invoices_count">—</div>
+          <button class="export-btn" id="invoices_export">Export CSV</button>
         </div>
         <div style="overflow:auto;">
           <table>
@@ -674,11 +743,17 @@ select {
     const raw = data.worklist || [];
     let rows = raw.slice();
 
+    const wlFilter = (document.getElementById("wl_filter").value || "").toLowerCase();
+
     rows = rows.filter(r => {
       const p = Number(r.priority ?? 0);
       const present = Number(r.is_currently_present ?? 0) === 1;
       if (presentOnly && !present) return false;
       if (p < minPriority) return false;
+      if (wlFilter) {
+        const searchable = [r.next_action, r.action_reason, r.attachment_name, r.document_hash].map(v => (v || "").toLowerCase()).join(" ");
+        if (!searchable.includes(wlFilter)) return false;
+      }
       return true;
     });
 
@@ -713,7 +788,8 @@ select {
       { key: "attachment_name", label: "Filename", cls: "nowrap", sortable: true },
       { key: "generated_at_utc", label: "Generated", cls: "nowrap", sortable: true },
       { key: "is_currently_present", label: "Present", cls: "nowrap", sortable: true },
-      { key: "document_hash", label: "Doc hash", cls: "nowrap", sortable: true }
+      { key: "document_hash", label: "Reference", cls: "nowrap", sortable: true },
+      { key: "_actions", label: "Actions", cls: "nowrap", sortable: false }
     ];
 
     head.innerHTML = "<tr>" + cols.map(c => {
@@ -765,6 +841,43 @@ select {
           return;
         }
 
+        if (c.key === "_actions") {
+          const pdfBtn = document.createElement("button");
+          pdfBtn.className = "action-btn";
+          pdfBtn.textContent = "PDF";
+          pdfBtn.title = "Download invoice PDF";
+          pdfBtn.addEventListener("click", () => { window.open(`/api/pdf/${hash}`, "_blank"); });
+          td.appendChild(pdfBtn);
+
+          const noteBtn = document.createElement("button");
+          noteBtn.className = "action-btn";
+          noteBtn.textContent = "Note";
+          noteBtn.title = "Add review note";
+          noteBtn.addEventListener("click", () => {
+            const note = prompt("Add a review note for this invoice:");
+            if (note) {
+              fetch("/api/add-note", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({document_hash: hash, note: note}) })
+                .then(r => r.json()).then(d => { if (d.ok) loadSnapshot(); else alert(d.error || "Failed"); });
+            }
+          });
+          td.appendChild(noteBtn);
+
+          const postBtn = document.createElement("button");
+          postBtn.className = "action-btn";
+          postBtn.textContent = "Posted";
+          postBtn.title = "Mark as posted";
+          postBtn.addEventListener("click", () => {
+            if (confirm("Mark this invoice as posted?")) {
+              fetch("/api/mark-posted", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({document_hash: hash}) })
+                .then(r => r.json()).then(d => { if (d.ok) loadSnapshot(); else alert(d.error || "Failed"); });
+            }
+          });
+          td.appendChild(postBtn);
+
+          tr.appendChild(td);
+          return;
+        }
+
         td.textContent = (v === null || v === undefined || v === "") ? "—" : String(v);
         tr.appendChild(td);
       });
@@ -779,6 +892,7 @@ select {
       if (!res.ok) throw new Error("Failed to load snapshot.json (" + res.status + ")");
       const data = await res.json();
       if (data._error) throw new Error(data._error);
+      window._lastSnapshotData = data;
 
       // Meta
       const lastScan = data.overview?.last_scan || "—";
@@ -1075,9 +1189,10 @@ select {
     });
   });
 
-  // Worklist filters rerender (no need to refetch, but simplest to keep consistent)
+  // Worklist filters
   document.getElementById("wl_present_only").addEventListener("change", loadSnapshot);
   document.getElementById("wl_min_priority").addEventListener("change", loadSnapshot);
+  document.getElementById("wl_filter").addEventListener("input", loadSnapshot);
 
   // Data tab filters (client-side only, no refetch)
   document.getElementById("po_master_filter").addEventListener("input", filterPoMaster);
@@ -1131,6 +1246,68 @@ select {
     } finally {
       btn.disabled = false;
     }
+  });
+
+  // ---- Auto-refresh (30s) ----
+  let _autoRefreshTimer = null;
+  const REFRESH_INTERVAL = 30000;
+
+  function startAutoRefresh() {
+    if (_autoRefreshTimer) clearInterval(_autoRefreshTimer);
+    _autoRefreshTimer = setInterval(() => {
+      loadSnapshot();
+      document.getElementById("refresh_status").textContent = `Auto-refreshed ${new Date().toLocaleTimeString()}`;
+    }, REFRESH_INTERVAL);
+  }
+
+  document.getElementById("refresh_btn").addEventListener("click", () => {
+    loadSnapshot();
+    document.getElementById("refresh_status").textContent = `Refreshed ${new Date().toLocaleTimeString()}`;
+  });
+
+  startAutoRefresh();
+
+  // ---- CSV Export ----
+  function downloadCsv(filename, headers, rows) {
+    const escape = (v) => {
+      const s = String(v ?? "");
+      return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [headers.map(escape).join(",")];
+    rows.forEach(r => lines.push(r.map(escape).join(",")));
+    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  document.getElementById("wl_export").addEventListener("click", () => {
+    const rows = (window._lastSnapshotData?.worklist || []).map(r => [
+      r.next_action, r.action_reason, r.attachment_name, r.generated_at_utc,
+      Number(r.is_currently_present ?? 0) === 1 ? "Yes" : "No", r.document_hash
+    ]);
+    downloadCsv("worklist.csv", ["Next Action","Reason","Filename","Generated","Present","Reference"], rows);
+  });
+
+  document.getElementById("po_master_export").addEventListener("click", () => {
+    const rows = _poMasterFiltered.map(r => [
+      r.po_number, r.supplier_account, r.po_status, r.approval_status,
+      r.invoice_count ?? 0, r.gross_total_pence ? (Number(r.gross_total_pence)/100).toFixed(2) : "",
+      r.last_import_datetime
+    ]);
+    downloadCsv("po_master.csv", ["PO Number","Supplier","PO Status","Approval","Invoices","Gross Total","Imported"], rows);
+  });
+
+  document.getElementById("invoices_export").addEventListener("click", () => {
+    const rows = _invoicesFiltered.map(r => [
+      r.attachment_file_name, r.po_match_status,
+      r.gross_total ? (Number(r.gross_total)/100).toFixed(2) : "",
+      r.first_seen_datetime, r.processing_status,
+      Number(r.is_currently_present ?? 0) === 1 ? "Yes" : "No"
+    ]);
+    downloadCsv("invoices.csv", ["Filename","PO Match Status","Gross Total","First Seen","Processing Status","Present"], rows);
   });
 </script>
 </body>

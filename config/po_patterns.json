@@ -1,0 +1,28 @@
+{
+  "_comment": "PO detection patterns for the IRS pipeline. Each entry defines a regex, a canonical format, and the number of expected digits.",
+  "prefix": "QAHE-PO-",
+  "digit_length": 6,
+  "patterns": [
+    {
+      "name": "full_prefix",
+      "regex": "\\bQAHE\\s*[-\\u2010-\\u2015]\\s*PO\\s*[-\\u2010-\\u2015]\\s*([0-9]{6})\\b",
+      "case_insensitive": true
+    },
+    {
+      "name": "purchase_order_label",
+      "regex": "\\bPurchase\\s*Order\\s*[:#]?\\s*(?:PO\\s*[-\\u2010-\\u2015]\\s*)?([0-9]{6})\\b",
+      "case_insensitive": true
+    },
+    {
+      "name": "po_colon",
+      "regex": "\\bPO\\s*#?\\s*:\\s*([0-9]{6})\\b",
+      "case_insensitive": true
+    },
+    {
+      "name": "po_dash",
+      "regex": "\\bPO\\s*[-\\u2010-\\u2015]\\s*([0-9]{6})\\b",
+      "case_insensitive": true,
+      "guard": "no_prefix_overlap"
+    }
+  ]
+}

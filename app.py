@@ -8,6 +8,7 @@ from flask import Flask, jsonify, request, send_file, send_from_directory
 
 from core.load_po_master import load_po_master
 from core.snapshot import write_snapshot
+from core.db import get_connection
 
 ROOT = Path(__file__).resolve().parent
 EXPORTS_DIR = ROOT / "exports"
@@ -68,6 +69,86 @@ def upload_po():
     except Exception:
         app.logger.exception("PO master load failed")
         return jsonify({"ok": False, "error": "Failed to process PO file. Check the server logs for details."}), 500
+
+
+STAGING_DIR = ROOT / "staging"
+
+
+@app.route("/api/mark-posted", methods=["POST"])
+def mark_posted():
+    """Mark an invoice as posted. Sets posted_datetime and refreshes the snapshot."""
+    data = request.get_json(silent=True) or {}
+    doc_hash = data.get("document_hash")
+    if not doc_hash:
+        return jsonify({"ok": False, "error": "document_hash required"}), 400
+
+    conn = get_connection()
+    try:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        cur = conn.execute(
+            "UPDATE invoice_document SET posted_datetime = ?, processing_status = 'POSTED' WHERE document_hash = ?",
+            (now, doc_hash),
+        )
+        if cur.rowcount == 0:
+            return jsonify({"ok": False, "error": "Invoice not found"}), 404
+        conn.commit()
+    finally:
+        conn.close()
+
+    try:
+        write_snapshot()
+    except Exception:
+        app.logger.exception("Snapshot refresh failed after mark-posted")
+
+    return jsonify({"ok": True, "posted_datetime": now})
+
+
+@app.route("/api/add-note", methods=["POST"])
+def add_note():
+    """Add a review note to an invoice."""
+    data = request.get_json(silent=True) or {}
+    doc_hash = data.get("document_hash")
+    note = data.get("note", "").strip()
+    if not doc_hash:
+        return jsonify({"ok": False, "error": "document_hash required"}), 400
+    if not note:
+        return jsonify({"ok": False, "error": "note required"}), 400
+
+    conn = get_connection()
+    try:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        cur = conn.execute(
+            "UPDATE invoice_document SET review_note = ?, reviewed_datetime = ?, review_outcome = 'REVIEWED' WHERE document_hash = ?",
+            (note, now, doc_hash),
+        )
+        if cur.rowcount == 0:
+            return jsonify({"ok": False, "error": "Invoice not found"}), 404
+        conn.commit()
+    finally:
+        conn.close()
+
+    try:
+        write_snapshot()
+    except Exception:
+        app.logger.exception("Snapshot refresh failed after add-note")
+
+    return jsonify({"ok": True})
+
+
+@app.route("/api/pdf/<doc_hash>")
+def serve_pdf(doc_hash):
+    """Serve a staged PDF by its document hash prefix."""
+    if not doc_hash or len(doc_hash) < 10:
+        return jsonify({"error": "Invalid hash"}), 400
+
+    # Find the staged file by hash prefix
+    matches = sorted(STAGING_DIR.glob(f"{doc_hash[:12]}_*"))
+    if not matches:
+        return jsonify({"error": "PDF not found in staging"}), 404
+
+    return send_file(matches[0], mimetype="application/pdf")
 
 
 if __name__ == "__main__":

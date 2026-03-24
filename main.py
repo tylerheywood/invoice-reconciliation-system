@@ -7,6 +7,8 @@ Processes invoices from a local input folder through PO matching,
 validation, and value extraction. Outputs a snapshot for the dashboard.
 '''
 
+import argparse
+import time
 from datetime import datetime, timezone
 import os
 import sys
@@ -36,6 +38,9 @@ from core.db import initialise_database, get_connection
 from core.load_po_master import load_po_master
 from core.worklist import refresh_worklist_tables
 from core.value_extraction import run_value_extraction
+from core.duplicate_detection import run_duplicate_detection
+from core.notifications import notify_new_exceptions
+from core.worklist import fetch_current_worklist
 from core.snapshot import write_snapshot
 
 
@@ -110,14 +115,28 @@ def main() -> None:
     value_summary = run_value_extraction(staging_dir=STAGING_DIR)
     print(value_summary)
 
+    # Stage 6: Duplicate Detection
+    print("\n--- Stage 6: Duplicate Detection ---")
+    dup_summary = run_duplicate_detection()
+    print(dup_summary)
+
     print("\n=== Done ===")
 
+    # Capture previous worklist hashes for webhook diff
     conn = get_connection()
     try:
+        prev_items = fetch_current_worklist(conn)
+        prev_hashes = {item["document_hash"] for item in prev_items if item.get("next_action") == "MANUAL REVIEW"}
         run_id = refresh_worklist_tables(conn)
+        current_items = fetch_current_worklist(conn)
     finally:
         conn.close()
     print(f"Worklist refreshed. run_id={run_id}")
+
+    # Notify webhook of new exceptions
+    notified = notify_new_exceptions(current_items, prev_hashes)
+    if notified:
+        print(f"[WEBHOOK] Notified {notified} new exception(s)")
 
     # Stage 7: Dashboard snapshot
     out = write_snapshot()
@@ -125,4 +144,19 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="IRS Pipeline")
+    parser.add_argument("--watch", action="store_true", help="Re-run pipeline on an interval")
+    parser.add_argument("--interval", type=int, default=300, help="Watch interval in seconds (default: 300)")
+    args = parser.parse_args()
+
+    if args.watch:
+        print(f"[WATCH] Running pipeline every {args.interval}s. Ctrl+C to stop.")
+        while True:
+            try:
+                main()
+            except Exception as e:
+                print(f"[WATCH] Pipeline error: {e}", flush=True)
+            print(f"[WATCH] Next run in {args.interval}s...", flush=True)
+            time.sleep(args.interval)
+    else:
+        main()
